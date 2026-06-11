@@ -346,9 +346,11 @@ td {
 </main>
 
 <script>
-// MASTER LEXICON DATA LAYER
-const CORE_DICT = [
-  // Pronouns
+// RUNTIME MUTABLE STORAGE
+let CORE_DICT = [];
+
+// LOCAL EMBEDDED EMERGENCY BACKUP DICTIONARY (CORS Desktop Testing Fallback)
+const EMERGENCY_FALLBACK_DICT = [
   {k:"es",t:"PRON",e:"I",case:"nominative",num:"singular"},
   {k:"en",t:"PRON",e:"me",case:"accusative",num:"singular"},
   {k:"ei",t:"PRON",e:"my",case:"genitive",num:"singular"},
@@ -357,10 +359,10 @@ const CORE_DICT = [
   {k:"an",t:"PRON",e:"you",case:"accusative",num:"singular"},
   {k:"ai",t:"PRON",e:"your",case:"genitive",num:"singular"},
   {k:"au",t:"PRON",e:"with you",case:"instrumental",num:"singular"},
-  {k:"is",t:"PRON",e:"he/she/it",case:"nominative",num:"singular"},
-  {k:"in",t:"PRON",e:"him/her/it",case:"accusative",num:"singular"},
-  {k:"si",t:"PRON",e:"his/her/its",case:"genitive",num:"singular"},
-  {k:"yu",t:"PRON",e:"with him/her/it",case:"instrumental",num:"singular"},
+  {k:"is",t:"PRON",e:"he, she, it",case:"nominative",num:"singular"},
+  {k:"in",t:"PRON",e:"him, her, it",case:"accusative",num:"singular"},
+  {k:"si",t:"PRON",e:"his, her, its",case:"genitive",num:"singular"},
+  {k:"yu",t:"PRON",e:"with him, with her, with it",case:"instrumental",num:"singular"},
   {k:"os",t:"PRON",e:"we",case:"nominative",num:"plural"},
   {k:"on",t:"PRON",e:"us",case:"accusative",num:"plural"},
   {k:"oi",t:"PRON",e:"our",case:"genitive",num:"plural"},
@@ -369,34 +371,58 @@ const CORE_DICT = [
   {k:"yan",t:"PRON",e:"them",case:"accusative",num:"plural"},
   {k:"yai",t:"PRON",e:"their",case:"genitive",num:"plural"},
   {k:"yau",t:"PRON",e:"with them",case:"instrumental",num:"plural"},
-
-  // Prepositions
-  {k:"ere",t:"PREP",e:"in, inside",base:"re"},
-  {k:"re",t:"PREP",e:"in, inside",base:"re"},
+  {k:"ere",t:"PREP",e:"in, inside, within",base:"re"},
+  {k:"re",t:"PREP",e:"in, inside, within",base:"re"},
   {k:"eme",t:"PREP",e:"from, out of",base:"me"},
   {k:"me",t:"PREP",e:"from, out of",base:"me"},
-  {k:"eke",t:"PREP",e:"with",base:"ke"},
-  {k:"ke",t:"PREP",e:"with",base:"ke"},
-
-  // Nouns
-  {k:"kas",t:"NOUN",e:"house",cls:"1st"},
-  {k:"path",t:"NOUN",e:"path",cls:"1st"},
-  {k:"varas",t:"NOUN",e:"city",cls:"2nd"},
-  {k:"ebes",t:"NOUN",e:"tavern",cls:"2nd"},
-  {k:"stass",t:"NOUN",e:"stone",cls:"1st"},
-  {k:"Hrosbíres",t:"NOUN",e:"Crossfire",cls:"2nd"},
-  {k:"Eskabíres",t:"NOUN",e:"Skavier",cls:"2nd"},
-
-  // Adjectives
-  {k:"melíl",t:"ADJ",e:"beautiful"},
-  {k:"liral",t:"ADJ",e:"happy"},
-
-  // Verbs
-  {k:"brenár",t:"VERB",e:"eat"},
-  {k:"subadár",t:"VERB",e:"speak"},
-  {k:"narár",t:"VERB",e:"do"},
-  {k:"suvár",t:"VERB",e:"help"}
+  {k:"eke",t:"PREP",e:"with, alongside",base:"ke"},
+  {k:"ke",t:"PREP",e:"with, alongside",base:"ke"},
+  {k:"kas",t:"NOUN",e:"house, home, dwelling",cls:"1st"},
+  {k:"path",t:"NOUN",e:"path, route, trail",cls:"1st"},
+  {k:"varas",t:"NOUN",e:"city, settlement",cls:"2nd"},
+  {k:"ebes",t:"NOUN",e:"tavern, inn, pub",cls:"2nd"},
+  {k:"stass",t:"NOUN",e:"stone, rock",cls:"1st"},
+  {k:"melíl",t:"ADJ",e:"beautiful, gorgeous, pretty"},
+  {k:"liral",t:"ADJ",e:"happy, joyful, glad"},
+  {k:"brenár",t:"VERB",e:"eat, consume, dine"},
+  {k:"subadár",t:"VERB",e:"speak, talk, converse"},
+  {k:"narár",t:"VERB",e:"do, make, perform"},
+  {k:"suvár",t:"VERB",e:"help, aid, assist"},
+  {k:"audal",t:"VERB",e:"fall, descend, collapse, succumb"}
 ];
+
+// ASYNC EXTERNAL JSON COMPANION LOADER VIA PROMISE CHAIN
+async function initializeDataLayer() {
+  try {
+    const res = await fetch('dictionary.json');
+    if (!res.ok) throw new Error(`HTTP Status Code Violation: ${res.status}`);
+    CORE_DICT = await res.json();
+    console.log("External JSON compilation imported successfully. Matrix scale:", CORE_DICT.length);
+  } catch (err) {
+    console.warn("External JSON unavailable or desktop sandbox CORS protection active. Deploying embedded engine fallback array.");
+    CORE_DICT = EMERGENCY_FALLBACK_DICT;
+  }
+  renderDict();
+}
+
+// ADVANCED SPLIT-TOKEN MULTI-DEFINITION SEARCH MATCH ENGINE
+function findWordByEnglish(token, typeFilter = null) {
+  let query = token.toLowerCase().trim();
+  if (query.startsWith("to ")) query = query.substring(3);
+  
+  return CORE_DICT.find(x => {
+    if (typeFilter && x.t !== typeFilter) return false;
+    
+    // Split target entry values along punctuation barriers or explicit text configurations
+    let options = x.e.toLowerCase().split(/[,;\/]+|\bor\b/).map(o => {
+      let str = o.trim();
+      if (str.startsWith("to ")) str = str.substring(3);
+      return str;
+    });
+    
+    return options.some(opt => opt === query || opt.includes(query));
+  });
+}
 
 function detectNounClass(w) {
   let clean = w.toLowerCase().trim();
@@ -452,7 +478,6 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
       let suffix = cl.substring(stem.length);
       let aspect = "simple", time = "present", mode = "direct";
 
-      // Structural checkpoints
       if (suffix === "aróth" || suffix === "óth") { mode = "reflexive"; time = "past"; aspect = "simple"; }
       else if (suffix === "aráth" || suffix === "áth") { mode = "reflexive"; time = "present"; aspect = "simple"; }
       else if (suffix === "aríth" || suffix === "íth") { mode = "reflexive"; time = "future"; aspect = "simple"; }
@@ -482,8 +507,8 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
 
   // Branch 4: Adjectives Matrix Parsing
   for (let x of CORE_DICT.filter(d => d.t === "ADJ")) {
-    let baseStem = x.k.endsWith("íl") ? "i" : "a";
     if (cl.startsWith(x.k.slice(0, -2)) || cl === x.k) {
+      let baseStem = x.k.endsWith("íl") ? "i" : "a";
       let contextCase = "[nominative/accusative/genitive/instrumental]";
       let contextNum = "[singular/plural]";
 
@@ -515,27 +540,22 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
     let sRoot = endsInS ? r.slice(0, -1) : r;
 
     if (cls === "1st") {
-      // Nominative
       if (cl === r) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "singular", meta: "Class: 1st\nCase: nominative\nNumber: singular" };
       if ((endsInS && cl === sRoot + "ssa") || (!endsInS && cl === r + "a") || cl === r + "á") 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
-      // Accusative
       if ((endsInS && cl === sRoot + "sse") || (!endsInS && cl === r + "e")) 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
       if ((endsInS && cl === sRoot + "ssé") || (!endsInS && cl === r + "é") || cl === r + "éa") 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
-      // Genitive
       if (cl === r + "i") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: "Class: 1st\nCase: genitive\nNumber: singular" };
       if (cl === r + "ía") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: "Class: 1st\nCase: genitive\nNumber: plural" };
-      // Instrumental
       if (cl === r + "u") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: "Class: 1st\nCase: instrumental\nNumber: singular" };
       if (cl === r + "úa") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "plural", meta: "Class: 1st\nCase: instrumental\nNumber: plural" };
     } else {
-      // 2nd Class Regular Parsing Scale
       let stemVowel = detectVocalicStem(x.k);
       let pureStem = x.k.endsWith('s') ? r.slice(0, -1) : r;
 
-      if (cl === r) return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "nominative", num: "singular", meta: `Class: 2nd\nStem: ${orangeStem(stemVowel)}\nCase: nominative\nNumber: singular` };
+      if (cl === r) return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "nominative", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: nominative\nNumber: singular` };
       if (cl === pureStem + "a" || cl === pureStem + "sa") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: nominative\nNumber: plural` };
       if (cl === pureStem) return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: singular` };
       if (cl === pureStem + "n") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: plural` };
@@ -547,8 +567,6 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
   }
   return null;
 }
-
-function orangeStem(v) { return v; }
 
 // TRANSLATION ENGINE & LOOKAHEAD English Suffix Compiler
 function doTranslate() {
@@ -567,7 +585,6 @@ function doTranslate() {
     });
     box.innerHTML = `<p><strong>Decoded Translation:</strong> ${output.join(" ")}</p>`;
   } else {
-    // English -> Kestelál Structural Verb Tokenizer Chain
     let words = input.toLowerCase().replace(/[,!?\.;:'"]/g, '').split(/\s+/);
     let output = [];
     let i = 0;
@@ -575,15 +592,11 @@ function doTranslate() {
     while (i < words.length) {
       let token = words[i];
 
-      // Match direct English Pronouns
-      let foundPron = CORE_DICT.find(x => x.t === "PRON" && x.e.toLowerCase() === token);
+      let foundPron = findWordByEnglish(token, "PRON");
       if (foundPron) {
-        output.push(foundPron.k);
-        i++;
-        continue;
+        output.push(foundPron.k); i++; continue;
       }
 
-      // Check Compound Verb Phrases Lookahead Structure
       let isVerbChain = false, aspect = "simple", time = "present", reflexive = false;
       let verbToken = "", skipCount = 0;
 
@@ -609,10 +622,7 @@ function doTranslate() {
           reflexive = true; skipCount++;
         }
 
-        let baseVerb = CORE_DICT.find(x => x.t === "VERB" && (
-          x.e.toLowerCase() === verbToken || verbToken.startsWith(x.e.toLowerCase().slice(0, 4))
-        ));
-
+        let baseVerb = findWordByEnglish(verbToken, "VERB");
         if (baseVerb) {
           let stem = baseVerb.k.replace(/ár$|ar$/, '');
           let suffix = "";
@@ -635,18 +645,16 @@ function doTranslate() {
         }
       }
 
-      // Single word verb fallback
-      let singleVerb = CORE_DICT.find(x => x.t === "VERB" && (x.e.toLowerCase() === token || token.startsWith(x.e.toLowerCase().slice(0,4))));
+      let singleVerb = findWordByEnglish(token, "VERB");
       if (singleVerb) {
         let reflSingle = (i + 1 < words.length && ["myself", "yourself", "himself", "herself", "itself", "ourselves", "themselves"].includes(words[i+1]));
         let stem = singleVerb.k.replace(/ár$|ar$/, '');
-        let isPast = token.endsWith("ed") || ["ate", "spoke", "did"].includes(token);
+        let isPast = token.endsWith("ed") || ["ate", "spoke", "did", "fell", "adorned"].includes(token);
         let suffix = isPast ? (reflSingle ? "aróth" : "ór") : (reflSingle ? "aráth" : "ár");
         output.push(stem + suffix); i += reflSingle ? 2 : 1; continue;
       }
 
-      // Base lookup
-      let generalWord = CORE_DICT.find(x => x.e.toLowerCase() === token || x.e.toLowerCase().includes(token));
+      let generalWord = findWordByEnglish(token);
       output.push(generalWord ? generalWord.k : `[${token}]`); i++;
     }
     box.innerHTML = `<p><strong>Synthesized Alignment Matrix:</strong> ${output.join(" ")}</p>`;
@@ -682,7 +690,6 @@ function doGloss() {
   html += '</div>'; box.innerHTML = html;
 }
 
-// STRUCTURAL COMPLIANCE PARADIGM GENERATION Windows
 function doDeclension() {
   let word = document.getElementById('decl-word').value.trim();
   let res = document.getElementById('decl-result');
@@ -715,7 +722,7 @@ function doDeclension() {
     let stem = detectVocalicStem(word);
     let base = word.endsWith('s') ? word.slice(0, -1) : word;
     res.innerHTML = `
-      <p style="margin-top:0.5rem; font-size:0.8rem; color:var(--amber);">Detected Second Class Variable (Stem Core: [${orangeStem(stem)}])</p>
+      <p style="margin-top:0.5rem; font-size:0.8rem; color:var(--amber);">Detected Second Class Variable (Stem Core: [${stem}])</p>
       <table>
         <tr><th>Case</th><th>Singular</th><th>Plural</th></tr>
         <tr><td class="td-kas">Nominative</td><td>${word}</td><td>${base}a (${base}sa)</td></tr>
@@ -766,7 +773,9 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 document.getElementById('dict-search').addEventListener('input', renderDict);
-window.onload = () => { renderDict(); };
+
+// Trigger initial JSON load execution when page loads
+window.onload = () => { initializeDataLayer(); };
 </script>
 </body>
 </html>
