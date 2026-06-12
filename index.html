@@ -671,28 +671,90 @@ function doTranslate() {
       }
     });
 
-    let subjs = [], objs = [], vbs = [], others = [];
-    analyzedTokens.forEach(t => {
-      if (t.type === "verb") vbs.push(t);
-      else if (t.type === "pronoun" || t.type === "noun") {
-        if (t.case === "accusative" || t.case === "instrumental") objs.push(t);
-        else subjs.push(t);
-      } else if (t.type !== "unknown") others.push(t);
+    let subjs = [], vbs = [], prepPhrases = [], looseObjs = [], others = [];
+
+    // First pass: pair each preposition with the accusative noun/pronoun that follows it
+    let skipNext = false;
+    analyzedTokens.forEach((t, idx) => {
+      if (skipNext) { skipNext = false; return; }
+
+      if (t.type === "verb") {
+        vbs.push(t);
+      } else if (t.type === "preposition") {
+        // Look ahead for the linked accusative noun/pronoun (may be immediately after, or before)
+        let linked = analyzedTokens[idx + 1];
+        if (linked && (linked.type === "noun" || linked.type === "pronoun" || linked.type === "name") && linked.case === "accusative") {
+          let nounGloss = linked.gloss.replace(/,\s*/g, ' / ');
+          if (linked.type === "noun" || linked.type === "name") nounGloss = "the " + nounGloss;
+          prepPhrases.push(t.gloss.replace(/,\s*/g, ' / ') + " " + nounGloss);
+          skipNext = true;
+        } else {
+          // Preposition without an immediately following acc noun — look behind
+          let prev = analyzedTokens[idx - 1];
+          if (prev && (prev.type === "noun" || prev.type === "pronoun" || prev.type === "name") && prev.case === "accusative") {
+            // The acc noun was already pushed to looseObjs — move it into a prepPhrase
+            let nounGloss = prev.gloss.replace(/,\s*/g, ' / ');
+            if (prev.type === "noun" || prev.type === "name") nounGloss = "the " + nounGloss;
+            looseObjs.pop();
+            prepPhrases.push(t.gloss.replace(/,\s*/g, ' / ') + " " + nounGloss);
+          } else {
+            others.push(t);
+          }
+        }
+      } else if (t.type === "pronoun" || t.type === "noun" || t.type === "name") {
+        if (t.case === "accusative" || t.case === "instrumental") {
+          // Check if next token is a preposition (acc noun comes before its preposition)
+          let next = analyzedTokens[idx + 1];
+          if (next && next.type === "preposition") {
+            let prepGloss = next.gloss.replace(/,\s*/g, ' / ');
+            let nounGloss = t.gloss.replace(/,\s*/g, ' / ');
+            if (t.type === "noun" || t.type === "name") nounGloss = "the " + nounGloss;
+            prepPhrases.push(prepGloss + " " + nounGloss);
+            skipNext = true;
+          } else {
+            looseObjs.push(t);
+          }
+        } else {
+          subjs.push(t);
+        }
+      } else if (t.type === "adjective") {
+        others.push(t);
+      }
+      // unknown tokens are silently dropped from fluid translation
     });
 
     let fluidTranslation = "";
     if (vbs.length > 0) {
-      let subjStr = subjs.map(s => s.gloss.replace(/,\s*/g, ' / ')).join(" ") || "It";
-      let objStr = objs.map(o => o.gloss.replace(/,\s*/g, ' / ')).join(" ");
       let verbNode = vbs[0];
       let inflectedVerb = inflectEnglishVerb(verbNode.gloss, verbNode.time || "present", verbNode.aspect || "simple");
-      
-      fluidTranslation = subjStr + " " + inflectedVerb + (objStr ? " " + objStr : "");
-      if (others.length > 0) fluidTranslation += " " + others.map(o => o.gloss.replace(/,\s*/g, ' / ')).join(" ");
-      fluidTranslation = fluidTranslation.trim();
+
+      let subjectPhrases = subjs.map(s => {
+        let text = s.gloss.replace(/,\s*/g, ' / ');
+        if ((s.type === "noun" || s.type === "name") && !text.toLowerCase().startsWith("the ")) text = "the " + text;
+        return text;
+      });
+      let objPhrases = looseObjs.map(o => {
+        let text = o.gloss.replace(/,\s*/g, ' / ');
+        if ((o.type === "noun" || o.type === "name") && !text.toLowerCase().startsWith("the ")) text = "the " + text;
+        return text;
+      });
+
+      let subjStr = subjectPhrases.join(" ") || "It";
+      // Word order: subject + verb + loose objects + prepositional phrases
+      let parts = [subjStr, inflectedVerb];
+      if (objPhrases.length > 0) parts.push(objPhrases.join(" "));
+      if (prepPhrases.length > 0) parts.push(prepPhrases.join(" "));
+      if (others.length > 0) parts.push(others.map(o => o.gloss.replace(/,\s*/g, ' / ')).join(" "));
+
+      fluidTranslation = parts.join(" ").trim();
       fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + ".";
     } else {
-      fluidTranslation = literalGlosser.join(" ");
+      fluidTranslation = literalGlosser.map((g, idx) => {
+        let orig = analyzedTokens[idx];
+        if (orig && (orig.type === "noun" || orig.type === "name") && !g.toLowerCase().startsWith("the ")) return "the " + g;
+        return g;
+      }).join(" ");
+      fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + ".";
     }
 
     box.innerHTML = `
@@ -824,16 +886,22 @@ function doTranslate() {
         let role = hasVerb ? "object" : "subject";
         if (matchedEntry.t === "PRON") {
           let finalPron = matchedEntry.k;
-          if (role === "object") {
+          // Force accusative if preceded by a preposition
+          let precededByPrep = outputComponents.length > 0 && outputComponents[outputComponents.length - 1].type === "preposition";
+          if (role === "object" || precededByPrep) {
             let accForm = CORE_DICT.find(x => x.t === "PRON" && x.e.toLowerCase() === matchedEntry.e.toLowerCase() && x.case === "accusative");
             if (accForm) finalPron = accForm.k;
+            role = "object";
           }
-          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular" });
+          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k });
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
           let isPlural = isEnglishPlural || (words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]));
           let cls = detectNounClass(matchedEntry.k);
           let inflected = matchedEntry.k;
-          let targetCase = role === "object" ? "accusative" : "nominative";
+          // Force accusative if preceded by a preposition
+          let precededByPrep = outputComponents.length > 0 && outputComponents[outputComponents.length - 1].type === "preposition";
+          let targetCase = (role === "object" || precededByPrep) ? "accusative" : "nominative";
+          if (precededByPrep) role = "object";
 
           if (cls === "1st") {
             let r = matchedEntry.k;
@@ -855,7 +923,7 @@ function doTranslate() {
               if (isPlural) inflected = base + "a / " + base + "sa";
             }
           }
-          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected, num: isPlural ? "plural" : "singular" });
+          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k });
         } else if (matchedEntry.t === "VERB") {
           hasVerb = true;
           let stem = matchedEntry.k.replace(/ár$|ar$/, '');
@@ -890,6 +958,9 @@ function doTranslate() {
             adjPlural = adjBase;
           }
           outputComponents.push({ type: "adjective", word: subjectIsPlural ? adjPlural : adjBase });
+        } else if (matchedEntry.t === "PREP") {
+          // Mark that the next noun should be accusative
+          outputComponents.push({ type: "preposition", word: matchedEntry.k });
         } else {
           outputComponents.push({ type: "other", word: matchedEntry.k });
         }
@@ -902,18 +973,63 @@ function doTranslate() {
       i++;
     }
 
+    // Post-process: any noun/pronoun immediately following a preposition gets forced to accusative
+    for (let idx = 0; idx < outputComponents.length; idx++) {
+      if (outputComponents[idx].type === "preposition") {
+        let next = outputComponents[idx + 1];
+        if (next && (next.type === "noun" || next.type === "name" || next.type === "pronoun") && next.role !== "object") {
+          // Re-inflect to accusative
+          next.role = "object";
+          let entry = CORE_DICT.find(x => x.k === next._base);
+          if (entry) {
+            let isPlural = next.num === "plural";
+            if (entry.t === "PRON") {
+              let accForm = CORE_DICT.find(x => x.t === "PRON" && x.e.toLowerCase() === entry.e.toLowerCase() && x.case === "accusative");
+              if (accForm) next.word = accForm.k;
+            } else {
+              let cls = detectNounClass(entry.k);
+              if (cls === "1st") {
+                let r = entry.k;
+                let endsInS = r.toLowerCase().endsWith('s');
+                let sRoot = endsInS ? r.slice(0, -1) : r;
+                if (isPlural) next.word = `${r}éa`;
+                else next.word = endsInS ? (sRoot.endsWith('s') ? `${sRoot}se` : `${sRoot}sse`) : `${r}e`;
+              } else {
+                let stem = detectVocalicStem(entry.k);
+                let base = entry.k.endsWith('s') ? entry.k.slice(0, -1) : entry.k;
+                next.word = isPlural ? base + stem + "n" : base;
+              }
+            }
+          }
+        }
+      }
+    }
+
     let finalOrder = [];
     let subjs = outputComponents.filter(c => c.role === "subject");
-    let objs = outputComponents.filter(c => c.role === "object");
     let vbs = outputComponents.filter(c => c.type === "verb");
     let adjs = outputComponents.filter(c => c.type === "adjective");
-    let others = outputComponents.filter(c => !c.role && c.type !== "verb" && c.type !== "adjective");
+    // Build preposition groups: [acc-noun, preposition] pairs (Kestelál order: noun before prep)
+    let prepGroups = [];
+    for (let idx = 0; idx < outputComponents.length; idx++) {
+      if (outputComponents[idx].type === "preposition") {
+        let prep = outputComponents[idx];
+        let next = outputComponents[idx + 1];
+        if (next && (next.type === "noun" || next.type === "name" || next.type === "pronoun") && next.role === "object") {
+          prepGroups.push([next.word, prep.word]); // noun first, then preposition
+          outputComponents[idx + 1]._inPrepGroup = true;
+        } else {
+          prepGroups.push([prep.word]);
+        }
+      }
+    }
+    let looseObjs = outputComponents.filter(c => c.role === "object" && !c._inPrepGroup);
 
-    if (subjs.length > 0 || objs.length > 0 || vbs.length > 0) {
+    if (subjs.length > 0 || looseObjs.length > 0 || vbs.length > 0 || prepGroups.length > 0) {
       subjs.forEach(s => finalOrder.push(s.word));
-      objs.forEach(o => finalOrder.push(o.word));
+      looseObjs.forEach(o => finalOrder.push(o.word));
       adjs.forEach(a => finalOrder.push(a.word));
-      others.forEach(oth => finalOrder.push(oth.word));
+      prepGroups.forEach(g => g.forEach(w => finalOrder.push(w)));
       vbs.forEach(v => finalOrder.push(v.word));
     } else {
       outputComponents.forEach(c => finalOrder.push(c.word));
