@@ -349,7 +349,7 @@ td {
 // RUNTIME MUTABLE STORAGE
 let CORE_DICT = [];
 
-// LOCAL EMBEDDED EMERGENCY BACKUP DICTIONARY (CORS Desktop Testing Fallback)
+// LOCAL EMBEDDED EMERGENCY BACKUP DICTIONARY
 const EMERGENCY_FALLBACK_DICT = [
   {k:"es",t:"PRON",e:"I",case:"nominative",num:"singular"},
   {k:"en",t:"PRON",e:"me",case:"accusative",num:"singular"},
@@ -391,7 +391,6 @@ const EMERGENCY_FALLBACK_DICT = [
   {k:"audal",t:"VERB",e:"fall, descend, collapse, succumb"}
 ];
 
-// ASYNC EXTERNAL JSON COMPANION LOADER VIA PROMISE CHAIN
 async function initializeDataLayer() {
   try {
     const res = await fetch('dictionary.json');
@@ -405,7 +404,6 @@ async function initializeDataLayer() {
   renderDict();
 }
 
-// ADVANCED SPLIT-TOKEN MULTI-DEFINITION SEARCH MATCH ENGINE
 function findWordByEnglish(token, typeFilter = null) {
   let query = token.toLowerCase().trim();
   if (query.startsWith("to ")) query = query.substring(3);
@@ -413,7 +411,6 @@ function findWordByEnglish(token, typeFilter = null) {
   return CORE_DICT.find(x => {
     if (typeFilter && x.t !== typeFilter) return false;
     
-    // Split target entry values along punctuation barriers or explicit text configurations
     let options = x.e.toLowerCase().split(/[,;\/]+|\bor\b/).map(o => {
       let str = o.trim();
       if (str.startsWith("to ")) str = str.substring(3);
@@ -441,21 +438,39 @@ function detectVocalicStem(w) {
   return clean.slice(-1);
 }
 
-// COMPREHENSIVE STRUCTURAL BRANCHING PARSER ENGINE
+// RESTORED & OPTIMIZED MORPHOLOGY PARSING ENGINE
 function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
   let cl = word.toLowerCase().trim().replace(/[,!?\.;:'"]/g, '');
   if (!cl) return null;
 
-  // Branch 1: Pronouns
-  let foundPron = CORE_DICT.find(x => x.t === "PRON" && x.k === cl);
-  if (foundPron) {
-    return {
-      type: "pronoun", base: foundPron.k, gloss: foundPron.e,
-      meta: `Case: ${foundPron.case}\nNumber: ${foundPron.num}`
-    };
+  // STEP 1: STRICT EXACT ROOT DICTIONARY LOOKUP FIRST (Prevents type corruption)
+  let exactMatch = CORE_DICT.find(x => x.k.toLowerCase() === cl);
+  if (exactMatch) {
+    if (exactMatch.t === "PRON") {
+      return { type: "pronoun", base: exactMatch.k, gloss: exactMatch.e, meta: `Case: ${exactMatch.case || 'nominative'}\nNumber: ${exactMatch.num || 'singular'}` };
+    }
+    if (exactMatch.t === "PREP") {
+      return { type: "preposition", base: exactMatch.base || exactMatch.k, gloss: exactMatch.e, meta: `Form: Direct\nConnected Case: accusative` };
+    }
+    if (exactMatch.t === "VERB") {
+      return { type: "verb", base: exactMatch.k, gloss: exactMatch.e, meta: `Mode: direct\nAspect: simple\nTime: present (Root)` };
+    }
+    if (exactMatch.t === "ADJ") {
+      return { type: "adjective", base: exactMatch.k, gloss: exactMatch.e, meta: `Case: nominative\nNumber: singular` };
+    }
+    if (exactMatch.t === "NOUN") {
+      let cls = exactMatch.cls || detectNounClass(exactMatch.k);
+      return { type: "noun", class: cls, base: exactMatch.k, gloss: exactMatch.e, case: "nominative", num: "singular", meta: `Class: ${cls}\nCase: nominative\nNumber: singular` };
+    }
   }
 
-  // Branch 2: Prepositions
+  // STEP 2: PRONOUNS LAYER
+  let foundPron = CORE_DICT.find(x => x.t === "PRON" && x.k === cl);
+  if (foundPron) {
+    return { type: "pronoun", base: foundPron.k, gloss: foundPron.e, meta: `Case: ${foundPron.case}\nNumber: ${foundPron.num}` };
+  }
+
+  // STEP 3: PREPOSITIONS LAYER
   let foundPrep = CORE_DICT.find(x => x.t === "PREP" && x.k === cl);
   if (foundPrep) {
     let isVowelStart = /^[aeiou]/.test(cl);
@@ -465,18 +480,16 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
       let nextAnalysis = analyzeWordMorphology(nextWord, [], 0);
       if (nextAnalysis && nextAnalysis.type === "noun") nextWordCase = nextAnalysis.case || "accusative";
     }
-    return {
-      type: "preposition", base: foundPrep.base, gloss: foundPrep.e,
-      meta: `Form: ${isVowelStart ? "Vowel-start (preceded by consonant)" : "Consonant-start (preceded by vowel)"}\nConnected Case: ${nextWordCase}`
-    };
+    return { type: "preposition", base: foundPrep.base, gloss: foundPrep.e, meta: `Form: ${isVowelStart ? "Vowel-start" : "Consonant-start"}\nConnected Case: ${nextWordCase}` };
   }
 
-  // Branch 3: Verbs Matrix Parsing Engine (With Perfect & Continuous Completions)
+  // STEP 4: STRICT VERB INFLECTION LOOP
   for (let x of CORE_DICT.filter(d => d.t === "VERB")) {
     let stem = x.k.replace(/ár$|ar$/, '');
-    if (cl.startsWith(stem)) {
+    if (cl.startsWith(stem) && cl.length > stem.length) {
       let suffix = cl.substring(stem.length);
       let aspect = "simple", time = "present", mode = "direct";
+      let validSuffix = true;
 
       if (suffix === "aróth" || suffix === "óth") { mode = "reflexive"; time = "past"; aspect = "simple"; }
       else if (suffix === "aráth" || suffix === "áth") { mode = "reflexive"; time = "present"; aspect = "simple"; }
@@ -495,44 +508,19 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
       else if (suffix === "ayá") { mode = "direct"; time = "present"; aspect = "perfect"; }
       else if (suffix === "ayó") { mode = "direct"; time = "past"; aspect = "perfect"; }
       else if (suffix === "ayí") { mode = "direct"; time = "future"; aspect = "perfect"; }
-      else if (suffix === "ár" || suffix === "ar" || suffix === "") { mode = "direct"; time = "present"; aspect = "simple"; }
-      else { continue; }
+      else if (suffix === "ár" || suffix === "ar") { mode = "direct"; time = "present"; aspect = "simple"; }
+      else { validSuffix = false; }
 
-      return {
-        type: "verb", base: x.k, gloss: (aspect === "perfect" ? "have/had " : "") + x.e,
-        meta: `Mode: ${mode}\nAspect: ${aspect}\nTime: ${time}`
-      };
-    }
-  }
-
-  // Branch 4: Adjectives Matrix Parsing
-  for (let x of CORE_DICT.filter(d => d.t === "ADJ")) {
-    if (cl.startsWith(x.k.slice(0, -2)) || cl === x.k) {
-      let baseStem = x.k.endsWith("íl") ? "i" : "a";
-      let contextCase = "[nominative/accusative/genitive/instrumental]";
-      let contextNum = "[singular/plural]";
-
-      if (adjacentTokens.length > 0) {
-        let adjNoun = adjacentTokens.find((t, idx) => {
-          if (idx !== currentIndex) {
-            let parsed = analyzeWordMorphology(t, [], 0);
-            return parsed && parsed.type === "noun";
-          }
-          return false;
-        });
-        if (adjNoun) {
-          let parsedN = analyzeWordMorphology(adjNoun, [], 0);
-          contextCase = parsedN.case; contextNum = parsedN.num;
-        }
+      if (validSuffix) {
+        return {
+          type: "verb", base: x.k, gloss: (aspect === "perfect" ? "have/had " : "") + x.e,
+          meta: `Mode: ${mode}\nAspect: ${aspect}\nTime: ${time}`
+        };
       }
-      return {
-        type: "adjective", base: x.k, gloss: x.e,
-        meta: `Ending Stem: ${baseStem} (${baseStem === "i" ? "íl - base ending" : "ál"})\nCase: ${contextCase}\nNumber: ${contextNum}`
-      };
     }
   }
 
-  // Branch 5: Nouns Parsing Matrix (With Explicit 1st/2nd Class Splits)
+  // STEP 5: NOUN PARSING LOOP WITH CORRECT 'VARAN' DEEPMATCH FORMULAS
   for (let x of CORE_DICT.filter(d => d.t === "NOUN")) {
     let cls = detectNounClass(x.k);
     let r = x.k.toLowerCase();
@@ -540,7 +528,6 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
     let sRoot = endsInS ? r.slice(0, -1) : r;
 
     if (cls === "1st") {
-      if (cl === r) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "singular", meta: "Class: 1st\nCase: nominative\nNumber: singular" };
       if ((endsInS && cl === sRoot + "ssa") || (!endsInS && cl === r + "a") || cl === r + "á") 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
       if ((endsInS && cl === sRoot + "sse") || (!endsInS && cl === r + "e")) 
@@ -555,20 +542,34 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
       let stemVowel = detectVocalicStem(x.k);
       let pureStem = x.k.endsWith('s') ? r.slice(0, -1) : r;
 
-      if (cl === r) return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "nominative", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: nominative\nNumber: singular` };
       if (cl === pureStem + "a" || cl === pureStem + "sa") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: nominative\nNumber: plural` };
       if (cl === pureStem) return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: singular` };
-      if (cl === pureStem + "n") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: plural` };
+      
+      // FIXED RULE MATRIX TARGETING STEM VOWEL ADJACENCY (e.g. var + a + n = varan)
+      if (cl === pureStem + stemVowel + "n" || cl === pureStem + "n") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: plural` };
+      
       if (cl === pureStem + "i") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: genitive\nNumber: singular` };
       if (cl === pureStem + "ya") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: genitive\nNumber: plural` };
       if (cl === pureStem + "u") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: instrumental\nNumber: singular` };
       if (cl === pureStem + "wa") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "instrumental", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: instrumental\nNumber: plural` };
     }
   }
+
+  // STEP 6: ADJECTIVES MATRIX PARSING (Safeguarded from wild string captures)
+  for (let x of CORE_DICT.filter(d => d.t === "ADJ")) {
+    let baseStem = x.k.slice(0, -2);
+    if (cl === x.k || (cl.startsWith(baseStem) && (cl.endsWith("íl") || cl.endsWith("ál")))) {
+      let stemChar = x.k.endsWith("íl") ? "i" : "a";
+      return {
+        type: "adjective", base: x.k, gloss: x.e,
+        meta: `Ending Stem: ${stemChar}\nCase: variant\nNumber: variant`
+      };
+    }
+  }
+
   return null;
 }
 
-// TRANSLATION ENGINE & LOOKAHEAD English Suffix Compiler
 function doTranslate() {
   const dir = document.querySelector('input[name=direction]:checked').value;
   const input = document.getElementById('translate-input').value.trim();
@@ -726,7 +727,7 @@ function doDeclension() {
       <table>
         <tr><th>Case</th><th>Singular</th><th>Plural</th></tr>
         <tr><td class="td-kas">Nominative</td><td>${word}</td><td>${base}a (${base}sa)</td></tr>
-        <tr><td class="td-kas">Accusative</td><td>${base}</td><td>${base}n</td></tr>
+        <tr><td class="td-kas">Accusative</td><td>${base}</td><td>${base}${stem}n</td></tr>
         <tr><td class="td-kas">Genitive</td><td>${base}i</td><td>${base}ya</td></tr>
         <tr><td class="td-kas">Instrumental</td><td>${base}u</td><td>${base}wa</td></tr>
       </table>`;
@@ -774,7 +775,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 document.getElementById('dict-search').addEventListener('input', renderDict);
 
-// Trigger initial JSON load execution when page loads
 window.onload = () => { initializeDataLayer(); };
 </script>
 </body>
