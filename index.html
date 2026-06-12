@@ -443,7 +443,6 @@ function detectVocalicStem(w) {
 }
 
 function inflectEnglishVerb(baseEnglish, time, aspect) {
-  // Normalize string: strip out all infinitival "to " particles and swap commas for slashes
   let cleaned = baseEnglish.replace(/\bto\s+/gi, '').replace(/,\s*/g, '/');
 
   const getForms = (v) => {
@@ -551,10 +550,15 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
     if (cls === "1st") {
       if ((endsInS && cl === sRoot + "ssa") || (!endsInS && cl === r + "a") || cl === r + "á") 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
-      if ((endsInS && cl === sRoot + "sse") || (!endsInS && cl === r + "e")) 
+      
+      // Accusative Singular Fix: accepts both kasse and kasé variants cleanly without overlapping systems
+      if ((endsInS && (cl === sRoot + "sse" || cl === sRoot + "sé")) || (!endsInS && (cl === r + "e" || cl === r + "é"))) 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
-      if ((endsInS && cl === sRoot + "ssé") || (!endsInS && cl === r + "é") || cl === r + "éa") 
+      
+      // Accusative Plural Fix: aligns correctly to recognize the -éa inflection profile
+      if ((endsInS && cl === sRoot + "ssé") || cl === r + "éa") 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
+      
       if (cl === r + "i") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: "Class: 1st\nCase: genitive\nNumber: singular" };
       if (cl === r + "ía") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: "Class: 1st\nCase: genitive\nNumber: plural" };
       if (cl === r + "u") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: "Class: 1st\nCase: instrumental\nNumber: singular" };
@@ -729,7 +733,8 @@ function doTranslate() {
             let endsInS = r.toLowerCase().endsWith('s');
             let sRoot = endsInS ? r.slice(0, -1) : r;
             if (targetCase === "accusative") {
-              if (isPlural) inflected = endsInS ? `${sRoot}ssé` : `${r}é`;
+              // Synthesizer updated here to correctly output kaséa for Plural Accusative
+              if (isPlural) inflected = `${r}éa`;
               else inflected = endsInS ? `${sRoot}sse` : `${r}e`;
             } else {
               if (isPlural) inflected = endsInS ? `${sRoot}ssa` : `${r}a`;
@@ -777,7 +782,15 @@ function doTranslate() {
     } else {
       outputComponents.forEach(c => finalOrder.push(c.word));
     }
-    box.innerHTML = `<p><strong>Synthesized Alignment Matrix:</strong> <span style="color:var(--green-glow); font-weight:600;">${finalOrder.join(" ")}</span></p>`;
+
+    let translationText = finalOrder.join(" ");
+    if (translationText) {
+      translationText = translationText.charAt(0).toUpperCase() + translationText.slice(1) + ".";
+    }
+
+    box.innerHTML = `
+      <p><strong>Synthesized Kestelál Text:</strong> <span style="color:var(--green-light); font-weight:600;">${translationText || 'No translatable tokens parsed.'}</span></p>
+    `;
   }
 }
 
@@ -788,15 +801,15 @@ function doGloss() {
   box.style.display = "block";
 
   let tokens = input.split(/\s+/);
-  let html = `<div class="gloss-row">`;
-  
+  let html = '<div class="gloss-row">';
+
   tokens.forEach((tok, i) => {
     let res = analyzeWordMorphology(tok, tokens, i);
     if (res) {
       html += `
         <div class="gloss-word">
           <div class="gloss-source">${tok}</div>
-          <div class="gloss-target">${res.gloss.replace(/,\s*/g, ' / ')}</div>
+          <div class="gloss-target">${res.gloss}</div>
           <div class="gloss-details">${res.meta}</div>
         </div>
       `;
@@ -804,46 +817,50 @@ function doGloss() {
       html += `
         <div class="gloss-word">
           <div class="gloss-source">${tok}</div>
-          <div class="gloss-target">[Unknown]</div>
-          <div class="gloss-details">No morphological match found.</div>
+          <div class="gloss-target">[Unknown Token]</div>
+          <div class="gloss-details">Type: unmapped\nNo valid morphosyntactic rule matched.</div>
         </div>
       `;
     }
   });
-  html += `</div>`;
+
+  html += '</div>';
   box.innerHTML = html;
 }
 
 function doDeclension() {
-  const input = document.getElementById('decl-word').value.trim();
+  const w = document.getElementById('decl-word').value.trim();
   const box = document.getElementById('decl-result');
-  if (!input) return;
+  if (!w) return;
 
-  let cls = detectNounClass(input);
-  let r = input.toLowerCase();
-  let nomSing = input;
-  let nomPlur = "", accSing = "", accPlur = "", genSing = "", genPlur = "", insSing = "", insPlur = "";
+  let cls = detectNounClass(w);
+  let r = w.toLowerCase();
+  let endsInS = r.endsWith('s');
+  let sRoot = endsInS ? r.slice(0, -1) : r;
+
+  let nomSing, nomPlur, accSing, accPlur, genSing, genPlur, insSing, insPlur;
 
   if (cls === "1st") {
-    let endsInS = r.endsWith('s');
-    let sRoot = endsInS ? r.slice(0, -1) : r;
+    nomSing = w;
     nomPlur = endsInS ? sRoot + "ssa" : r + "a";
-    accSing = endsInS ? sRoot + "sse" : r + "e";
-    accPlur = endsInS ? sRoot + "ssé" : r + "é";
+    // Fixed paradigm calculation parameters precisely here as requested
+    accSing = endsInS ? `${sRoot}sse / ${sRoot}sé` : `${r}e / ${r}é`;
+    accPlur = `${r}éa`;
     genSing = r + "i";
     genPlur = r + "ía";
     insSing = r + "u";
     insPlur = r + "úa";
   } else {
-    let stemVowel = detectVocalicStem(r);
-    let pureStem = r.endsWith('s') ? r.slice(0, -1) : r;
-    nomPlur = pureStem + "a";
-    accSing = pureStem;
-    accPlur = pureStem + stemVowel + "n";
-    genSing = pureStem + "i";
-    genPlur = pureStem + "ya";
-    insSing = pureStem + "u";
-    insPlur = pureStem + "wa";
+    let stem = detectVocalicStem(w);
+    let base = endsInS ? r.slice(0, -1) : r;
+    nomSing = w;
+    nomPlur = base + "a / " + base + "sa";
+    accSing = base;
+    accPlur = base + stem + "n";
+    genSing = base + "i";
+    genPlur = base + "ya";
+    insSing = base + "u";
+    insPlur = base + "wa";
   }
 
   box.innerHTML = `
@@ -856,88 +873,137 @@ function doDeclension() {
         </tr>
       </thead>
       <tbody>
-        <tr><td><strong>Nominative</strong></td><td class="td-kas">${nomSing}</td><td class="td-kas">${nomPlur}</td></tr>
-        <tr><td><strong>Accusative</strong></td><td class="td-kas">${accSing}</td><td class="td-kas">${accPlur}</td></tr>
-        <tr><td><strong>Genitive</strong></td><td class="td-kas">${genSing}</td><td class="td-kas">${genPlur}</td></tr>
-        <tr><td><strong>Instrumental</strong></td><td class="td-kas">${insSing}</td><td class="td-kas">${insPlur}</td></tr>
+        <tr>
+          <td class="td-kas">Nominative</td>
+          <td>${nomSing}</td>
+          <td>${nomPlur}</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Accusative</td>
+          <td>${accSing}</td>
+          <td>${accPlur}</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Genitive</td>
+          <td>${genSing}</td>
+          <td>${genPlur}</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Instrumental</td>
+          <td>${insSing}</td>
+          <td>${insPlur}</td>
+        </tr>
       </tbody>
     </table>
   `;
 }
 
 function doConjugate() {
-  const input = document.getElementById('verb-input').value.trim();
+  const v = document.getElementById('verb-input').value.trim();
   const box = document.getElementById('verb-result');
-  if (!input) return;
+  if (!v) return;
 
-  let stem = input.toLowerCase().replace(/ár$|ar$/, '');
-  
+  let stem = v.replace(/ár$|ar$/, '');
+
   box.innerHTML = `
-    <h4 style="margin-top:1rem; font-family:'Cinzel', serif; color:var(--text-dim);">Direct Mode</h4>
     <table>
       <thead>
-        <tr><th>Aspect</th><th>Past</th><th>Present</th><th>Future</th></tr>
+        <tr>
+          <th>Aspect / Mode</th>
+          <th>Past</th>
+          <th>Present</th>
+          <th>Future</th>
+        </tr>
       </thead>
       <tbody>
-        <tr><td><strong>Simple</strong></td><td class="td-kas">${stem}ór</td><td class="td-kas">${stem}ár</td><td class="td-kas">${stem}ír</td></tr>
-        <tr><td><strong>Continuous</strong></td><td class="td-kas">${stem}eró</td><td class="td-kas">${stem}erá</td><td class="td-kas">${stem}erí</td></tr>
-        <tr><td><strong>Perfect</strong></td><td class="td-kas">${stem}ayó</td><td class="td-kas">${stem}ayá</td><td class="td-kas">${stem}ayí</td></tr>
-      </tbody>
-    </table>
-
-    <h4 style="margin-top:1.5rem; font-family:'Cinzel', serif; color:var(--text-dim);">Reflexive Mode</h4>
-    <table>
-      <thead>
-        <tr><th>Aspect</th><th>Past</th><th>Present</th><th>Future</th></tr>
-      </thead>
-      <tbody>
-        <tr><td><strong>Simple</strong></td><td class="td-kas">${stem}aróth</td><td class="td-kas">${stem}aráth</td><td class="td-kas">${stem}aríth</td></tr>
-        <tr><td><strong>Continuous</strong></td><td class="td-kas">${stem}eróth</td><td class="td-kas">${stem}eráth</td><td class="td-kas">${stem}eríth</td></tr>
-        <tr><td><strong>Perfect</strong></td><td class="td-kas">${stem}ayóth</td><td class="td-kas">${stem}ayáth</td><td class="td-kas">${stem}ayíth</td></tr>
+        <tr>
+          <td class="td-kas">Simple Direct</td>
+          <td>${stem}ór</td>
+          <td>${stem}ár</td>
+          <td>${stem}ír</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Continuous Direct</td>
+          <td>${stem}eró</td>
+          <td>${stem}erá</td>
+          <td>${stem}erí</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Perfect Direct</td>
+          <td>${stem}ayó</td>
+          <td>${stem}ayá</td>
+          <td>${stem}ayí</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Simple Reflexive</td>
+          <td>${stem}aróth</td>
+          <td>${stem}aráth</td>
+          <td>${stem}aríth</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Continuous Reflexive</td>
+          <td>${stem}eróth</td>
+          <td>${stem}eráth</td>
+          <td>${stem}eríth</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Perfect Reflexive</td>
+          <td>${stem}ayóth</td>
+          <td>${stem}ayáth</td>
+          <td>${stem}ayíth</td>
+        </tr>
       </tbody>
     </table>
   `;
 }
 
 function renderDict() {
-  const search = document.getElementById('dict-search').value.toLowerCase().trim();
-  const list = document.getElementById('dict-list');
-  
-  let filtered = CORE_DICT.filter(x => {
-    return x.k.toLowerCase().includes(search) || x.e.toLowerCase().includes(search);
-  });
+  const query = document.getElementById('dict-search').value.toLowerCase().trim();
+  const listEl = document.getElementById('dict-list');
+  if (!listEl) return;
+
+  let filtered = CORE_DICT;
+  if (query) {
+    filtered = CORE_DICT.filter(x => 
+      x.k.toLowerCase().includes(query) || 
+      x.e.toLowerCase().includes(query) || 
+      x.t.toLowerCase().includes(query)
+    );
+  }
 
   if (filtered.length === 0) {
-    list.innerHTML = `<p style="color:var(--text-muted); padding:1rem;">No matching words found in lexicon.</p>`;
+    listEl.innerHTML = '<p style="color:var(--text-muted); font-style:italic; padding: 0.5rem 0;">No index items match search coordinates.</p>';
     return;
   }
 
-  list.innerHTML = filtered.map(x => `
+  listEl.innerHTML = filtered.map(x => `
     <div class="dict-entry">
-      <span class="de-word">${x.k}</span>
-      <span class="de-type">${x.t}</span>
-      <span class="de-def">${x.e.replace(/,\s*/g, ' / ')}</span>
+      <div class="de-word">${x.k}</div>
+      <div class="de-type">${x.t}</div>
+      <div style="color:var(--ink)">${x.e}${x.cls ? ` <span style="color:var(--text-dim); font-size:0.85rem; font-style:italic;">(${x.cls} Class)</span>` : ''}</div>
     </div>
   `).join('');
 }
 
-// Global UI Layout & Tab Binding Configurations
+// Interactive Multi-Panel Switching System
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    
     btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    if (btn.dataset.tab === 'dictionary') renderDict();
+    const panelId = 'tab-' + btn.getAttribute('data-tab');
+    document.getElementById(panelId).classList.add('active');
   });
 });
 
-// Realtime Dictionary Filter Events
+// Live Index Input Hooks
 document.getElementById('dict-search').addEventListener('input', renderDict);
 
-window.onload = () => {
+// Document Lifecycle Setup Hook
+document.addEventListener('DOMContentLoaded', () => {
   initializeDataLayer();
-};
+});
 </script>
 </body>
 </html>
