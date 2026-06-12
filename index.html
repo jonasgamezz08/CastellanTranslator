@@ -421,8 +421,12 @@ function findWordByEnglishPhrase(phrase, typeFilter = null) {
     let def = x.e.toLowerCase().trim();
     if (def === q) return true;
     
+    // Split on commas, slashes, or semicolons to check individual definitions
     let options = def.split(/[,;\/]+|\bor\b/).map(o => o.trim());
     if (options.some(opt => opt === q || q === opt)) return true;
+    
+    // Check if any sub-definition contains the word standalone
+    if (options.some(opt => opt.split(/\s+/).includes(q))) return true;
     
     let cleanQ = q.startsWith("to ") ? q.substring(3).trim() : q;
     let cleanOptions = options.map(opt => opt.startsWith("to ") ? opt.substring(3).trim() : opt);
@@ -706,11 +710,19 @@ function doTranslate() {
     let clauseAspect = "simple";
     let clauseReflexive = false;
 
-    while (i < words.length) {
+while (i < words.length) {
       let token = words[i];
+
+      // 1. Explicitly ignore copula/linking verbs like "are", "is", "am" if they are part of a description
+      if (["are", "is", "am"].includes(token)) {
+        i++;
+        continue;
+      }
 
       let matchedEntry = null;
       let matchLength = 0;
+      
+      // Try phrase matching first
       for (let len = Math.min(5, words.length - i); len >= 1; len--) {
         let subPhrase = words.slice(i, i + len).join(" ");
         let normalizedPhrase = subPhrase.replace(/\s+\/\s+/g, "/");
@@ -719,6 +731,16 @@ function doTranslate() {
           matchedEntry = found;
           matchLength = len;
           break;
+        }
+      }
+
+      // If phrase matching failed, check if the word is pluralized (e.g., "barons") and try checking the singular base
+      if (!matchedEntry && token.endsWith('s')) {
+        let singularTry = token.slice(0, -1);
+        let found = findWordByEnglishPhrase(singularTry);
+        if (found && (found.t === "NOUN" || found.t === "NAME")) {
+          matchedEntry = found;
+          matchLength = 1;
         }
       }
 
@@ -781,6 +803,7 @@ function doTranslate() {
           }
           outputComponents.push({ type: "pronoun", role: role, word: finalPron });
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
+          // Explicitly evaluate if the raw input phrase was pluralized
           let isPlural = words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]);
           let cls = detectNounClass(matchedEntry.k);
           let inflected = matchedEntry.k;
@@ -803,7 +826,8 @@ function doTranslate() {
               if (isPlural) inflected = base + stem + "n";
               else inflected = base;
             } else {
-              if (isPlural) inflected = base + "a";
+              // Plural profile options representation (e.g. Varaa/Varasa)
+              if (isPlural) inflected = base + "a / " + base + "sa";
             }
           }
           outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected });
@@ -813,6 +837,14 @@ function doTranslate() {
           let isPast = token.endsWith("ed") || ["ate", "spoke", "did", "fell"].includes(token);
           let suffix = isPast ? "ór" : "ár";
           outputComponents.push({ type: "verb", word: stem + suffix });
+        } else if (matchedEntry.t === "ADJ") {
+          // If modifying a plural subject, add optional adjective plurality markers (e.g., killa/kilá)
+          let matchesPluralSubject = words.some(w => w.endsWith('s') && w !== "the" && w !== "is");
+          let finalAdj = matchedEntry.k;
+          if (matchesPluralSubject) {
+            finalAdj = matchedEntry.k + "a / " + matchedEntry.k.slice(0,-1) + "á";
+          }
+          outputComponents.push({ type: "adjective", word: finalAdj });
         } else {
           outputComponents.push({ type: "other", word: matchedEntry.k });
         }
@@ -823,6 +855,29 @@ function doTranslate() {
       if (token === "the" || token === "a" || token === "an") { i++; continue; }
       if (token !== "/") outputComponents.push({ type: "unknown", word: `[${token}]` });
       i++;
+    }
+
+    // Sort order: subjects -> items -> verbs -> adjectives/others
+    let finalOrder = [];
+    let subjs = outputComponents.filter(c => c.role === "subject");
+    let objs = outputComponents.filter(c => c.role === "object");
+    let vbs = outputComponents.filter(c => c.type === "verb");
+    let adjs = outputComponents.filter(c => c.type === "adjective");
+    let others = outputComponents.filter(c => !c.role && c.type !== "verb" && c.type !== "adjective");
+
+    if (subjs.length > 0 || objs.length > 0 || vbs.length > 0 || adjs.length > 0) {
+      subjs.forEach(s => finalOrder.push(s.word));
+      objs.forEach(o => finalOrder.push(o.word));
+      adjs.forEach(a => finalOrder.push(a.word));
+      vbs.forEach(v => finalOrder.push(v.word));
+      others.forEach(oth => finalOrder.push(oth.word));
+    } else {
+      outputComponents.forEach(c => finalOrder.push(c.word));
+    }
+
+    let translationText = finalOrder.join(" ");
+    if (translationText) {
+      translationText = translationText.charAt(0).toUpperCase() + translationText.slice(1) + ".";
     }
 
     let finalOrder = [];
