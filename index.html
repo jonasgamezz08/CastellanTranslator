@@ -340,8 +340,9 @@ td {
     <div class="card-title">Active Lexicon Index Search</div>
     <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
       <input type="text" id="dict-search" placeholder="Type here to search words..." style="width: 100%;">
-      <div style="white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--amber); background: rgba(200,146,42,0.1); padding: 6px 12px; border-radius: var(--radius); border: 1px solid rgba(200,146,42,0.2);">
-        Verbs: <span id="verb-counter" style="color: var(--amber-light); font-weight: bold;">0</span>
+      <div style="display: flex; gap: 0.5rem; white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--amber); background: rgba(200,146,42,0.1); padding: 6px 12px; border-radius: var(--radius); border: 1px solid rgba(200,146,42,0.2);">
+        <div>Total Words: <span id="total-counter" style="color: var(--green-light); font-weight: bold;">0</span></div>
+        <div style="border-left: 1px solid rgba(200,146,42,0.3); margin-left: 0.5rem; padding-left: 0.5rem;">Verbs: <span id="verb-counter" style="color: var(--amber-light); font-weight: bold;">0</span></div>
       </div>
     </div>
     <div id="dict-list" style="max-height:400px; overflow-y:auto;"></div>
@@ -1292,9 +1293,9 @@ function renderDict() {
   const listEl = document.getElementById('dict-list');
   if (!listEl) return;
 
-  // Verb Counter Implementation
-  // Calculates the number of verbs in the currently visible/filtered dictionary list
-  const counterEl = document.getElementById('verb-counter');
+  // Counter Elements Implementation
+  const totalCounterEl = document.getElementById('total-counter');
+  const verbCounterEl = document.getElementById('verb-counter');
   
   let filtered = CORE_DICT;
   if (query) {
@@ -1305,9 +1306,13 @@ function renderDict() {
     );
   }
 
-  if (counterEl) {
+  // Dynamically update counts based on the filtered results
+  if (totalCounterEl) {
+    totalCounterEl.textContent = filtered.length;
+  }
+  if (verbCounterEl) {
     const verbCount = filtered.filter(x => x.t === "VERB").length;
-    counterEl.textContent = verbCount;
+    verbCounterEl.textContent = verbCount;
   }
 
   if (filtered.length === 0) {
