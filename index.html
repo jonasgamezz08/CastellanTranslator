@@ -784,7 +784,7 @@ else if ((token === "was" || token === "were") && words[i+1]) {
         clauseTime = "past"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
       }
 
-      if (isVerbChain) {
+if (isVerbChain) {
         let nextIdx = i + skipCount;
         if (nextIdx < words.length && ["myself", "yourself", "himself", "herself", "itself", "ourselves", "themselves"].includes(words[nextIdx])) {
           clauseReflexive = true; skipCount++;
@@ -812,6 +812,26 @@ else if ((token === "was" || token === "were") && words[i+1]) {
           continue;
         }
       }
+
+      // ==========================================
+      // ADD THIS NEW COPULA VERB INTERCEPTOR HERE:
+      // ==========================================
+      if (["am", "is", "are", "was", "were"].includes(token)) {
+        // Force look up your castellan verb (e.g. searching "be" or "exist" in dictionary)
+        // Adjust "be" to match the exact English definition string you wrote in your JSON for 'tarár'
+        let baseVerb = findWordByEnglishPhrase("be", "VERB") || findWordByEnglishPhrase("exist", "VERB");
+        
+        if (baseVerb) {
+          hasVerb = true;
+          let stem = baseVerb.k.replace(/ár$|ar$/, '');
+          let isPast = ["was", "were"].includes(token);
+          let suffix = isPast ? "ór" : "ár"; // -ór for past, -ár for present simple direct
+          outputComponents.push({ type: "verb", word: stem + suffix });
+          i++;
+          continue;
+        }
+      }
+      // ==========================================
 
       if (matchedEntry) {
         let role = hasVerb ? "object" : "subject";
