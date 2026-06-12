@@ -568,7 +568,8 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
       }
       const VOWELS_M = "aeiouáéíóú";
       let consonantFinal = r.length > 0 && !endsInS && !VOWELS_M.includes(r[r.length - 1]);
-      let finalCons = consonantFinal ? r[r.length - 1] : '';
+      let lastCh = r[r.length - 1];
+      let finalCons = consonantFinal ? ((r.length >= 2 && r[r.length - 2] === lastCh) ? '' : lastCh) : '';
       let stripped = consonantFinal ? stripAccentM(r) : r;
 
       // Nominative plural
@@ -796,7 +797,7 @@ function doTranslate() {
             let accForm = CORE_DICT.find(x => x.t === "PRON" && x.e.toLowerCase() === matchedEntry.e.toLowerCase() && x.case === "accusative");
             if (accForm) finalPron = accForm.k;
           }
-          outputComponents.push({ type: "pronoun", role: role, word: finalPron });
+          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular" });
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
           let isPlural = isEnglishPlural || (words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]));
           let cls = detectNounClass(matchedEntry.k);
@@ -809,9 +810,9 @@ function doTranslate() {
             let sRoot = endsInS ? r.slice(0, -1) : r;
             if (targetCase === "accusative") {
               if (isPlural) inflected = `${r}éa`;
-              else inflected = endsInS ? `${sRoot}sse` : `${r}e`;
+              else inflected = endsInS ? (sRoot.endsWith('s') ? `${sRoot}se` : `${sRoot}sse`) : `${r}e`;
             } else {
-              if (isPlural) inflected = endsInS ? `${sRoot}ssa` : `${r}a`;
+              if (isPlural) inflected = endsInS ? (sRoot.endsWith('s') ? `${sRoot}sa` : `${sRoot}ssa`) : `${r}a`;
             }
           } else {
             let stem = detectVocalicStem(matchedEntry.k);
@@ -823,7 +824,7 @@ function doTranslate() {
               if (isPlural) inflected = base + "a / " + base + "sa";
             }
           }
-          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected });
+          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected, num: isPlural ? "plural" : "singular" });
         } else if (matchedEntry.t === "VERB") {
           hasVerb = true;
           let stem = matchedEntry.k.replace(/ár$|ar$/, '');
@@ -839,13 +840,16 @@ function doTranslate() {
           const ADJ_VOWELS = "aeiouáéíóú";
           let adjBase = matchedEntry.k;
           let adjPlural;
-          let subjectIsPlural = words.some((w, wi) => {
-            // Check if any noun/subject word looks plural (ends in s, not an aux verb)
-            return w.endsWith('s') && !["is","was","has","does","goes"].includes(w);
-          });
+          let subjectIsPlural = outputComponents.some(c =>
+            c.role === "subject" && (
+              c.num === "plural" ||
+              (c.type === "noun" && c.word && (c.word.endsWith("a") || c.word.includes("/")))
+            )
+          ) || isEnglishPlural;
           if (subjectIsPlural && !ADJ_VOWELS.includes(adjBase[adjBase.length - 1])) {
             // Consonant-final adjective plural: double final consonant + a / strip accent + á
-            let finalCons = adjBase[adjBase.length - 1];
+            let lastCh = adjBase[adjBase.length - 1];
+            let finalCons = (adjBase.length >= 2 && adjBase[adjBase.length - 2] === lastCh) ? '' : lastCh;
             let stripped = stripAdjAccent(adjBase);
             adjPlural = `${adjBase}${finalCons}a / ${stripped}á`;
           } else if (subjectIsPlural) {
@@ -961,8 +965,10 @@ function doDeclension() {
 
     if (endsInS) {
       // Words ending in -s: double the s → -ssa / accented variant -sá (strip stem accent)
-      nomPlur = sRoot + "ssa";
-      accSing = `${sRoot}sse / ${stripStemAccent(sRoot)}sé`;
+      // If sRoot already ends in s (i.e. word ends in -ss), don't add a third s
+      let sSuffix = sRoot.endsWith('s') ? '' : 's';
+      nomPlur = sRoot + sSuffix + "sa";
+      accSing = `${sRoot}${sSuffix}se / ${stripStemAccent(sRoot)}${sSuffix}é`;
       accPlur = stripStemAccent(r) + "éa";
       genSing = r + "i";
       genPlur = stripStemAccent(r) + "ía";
@@ -970,7 +976,9 @@ function doDeclension() {
       insPlur = stripStemAccent(r) + "úa";
     } else if (endsInConsonant(r)) {
       // Words ending in a consonant: double final consonant + vowel / OR strip accent + accented suffix vowel
-      let finalCons = r[r.length - 1];
+      // If already doubled (e.g. -ss), don't add a third
+      let lastCh = r[r.length - 1];
+      let finalCons = (r.length >= 2 && r[r.length - 2] === lastCh) ? '' : lastCh;
       let stripped = stripStemAccent(r);
       nomPlur = `${r}${finalCons}a / ${stripped}á`;
       accSing = `${r}${finalCons}e / ${stripped}é`;
