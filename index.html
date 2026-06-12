@@ -711,6 +711,40 @@ function doTranslate() {
     while (i < words.length) {
       let token = words[i];
 
+      // ==========================================================
+      // 1. COPULA INTERCEPTOR (TRAPS STANDALONE BE/ARE DIRECTLY)
+      // ==========================================================
+      if (["am", "is", "are", "was", "were"].includes(token)) {
+        // Look ahead to see if this is just a continuous verb helper helper chain (e.g., "are running")
+        let nextWordIsVerb = (i + 1 < words.length) ? findWordByEnglishPhrase(words[i+1], "VERB") : null;
+
+        if (nextWordIsVerb) {
+          // It's a continuous verb chain! Let the original verb chain handler below look after it.
+          // Do nothing here and let it flow down naturally.
+        } else {
+          // It's a standalone linking verb (like "barons are great")!
+          hasVerb = true;
+          
+          // Force locate your core dictionary entries for your "be" or "exist" copula stem
+          let baseVerb = CORE_DICT.find(x => x.t === "VERB" && (x.k.startsWith("tar") || x.k === "ar" || x.e.includes("be")));
+          
+          let stem = "tar"; // fallback default stem
+          if (baseVerb) {
+            stem = baseVerb.k.replace(/ár$|ar$/, '');
+          }
+
+          let isPast = ["was", "were"].includes(token);
+          let suffix = isPast ? "ór" : ""; // Present tense plural 'are' converts cleanly to bare stem 'tar'
+
+          outputComponents.push({ type: "verb", word: stem + suffix });
+          i++;
+          continue; // Move on cleanly to the next word ("great")
+        }
+      }
+
+      // ==========================================================
+      // 2. PHRASE LOOKAHEAD MATCHING
+      // ==========================================================
       let matchedEntry = null;
       let matchLength = 0;
       
@@ -734,6 +768,9 @@ function doTranslate() {
         }
       }
 
+      // ==========================================================
+      // 3. AUXILIARY COMPLEX VERB CHAINS
+      // ==========================================================
       let isVerbChain = false;
       let verbToken = "";
       let skipCount = 0;
@@ -749,37 +786,12 @@ function doTranslate() {
       } else if (token === "had" && words[i+1]) {
         clauseTime = "past"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
       } else if ((token === "am" || token === "is" || token === "are") && words[i+1]) {
-  // Check if the next word is actually meant to be a continuous verb in your dictionary
-  let nextWordIsVerb = findWordByEnglishPhrase(words[i+1], "VERB");
-  
-  if (nextWordIsVerb) {
-    clauseTime = "present"; 
-    clauseAspect = "continuous"; 
-    verbToken = words[i+1]; 
-    skipCount = 2; 
-    isVerbChain = true;
-  } else {
-    // If the next word isn't a verb, treat 'are' as a standalone main verb!
-    isVerbChain = false; 
-  }
-}
-else if ((token === "was" || token === "were") && words[i+1]) {
-  let nextWordIsVerb = findWordByEnglishPhrase(words[i+1], "VERB");
-  
-  if (nextWordIsVerb) {
-    clauseTime = "past"; 
-    clauseAspect = "continuous"; 
-    verbToken = words[i+1]; 
-    skipCount = 2; 
-    isVerbChain = true;
-  } else {
-    isVerbChain = false;
-  }
-} else if ((token === "was" || token === "were") && words[i+1]) {
+        clauseTime = "present"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+      } else if ((token === "was" || token === "were") && words[i+1]) {
         clauseTime = "past"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
       }
 
-if (isVerbChain) {
+      if (isVerbChain) {
         let nextIdx = i + skipCount;
         if (nextIdx < words.length && ["myself", "yourself", "himself", "herself", "itself", "ourselves", "themselves"].includes(words[nextIdx])) {
           clauseReflexive = true; skipCount++;
@@ -808,32 +820,9 @@ if (isVerbChain) {
         }
       }
 
-      // ==========================================
-      // COPULA VERB INTERCEPTOR 
-      // ==========================================
-      if (["am", "is", "are", "was", "were"].includes(token)) {
-        // Fallback checks to find your 'ar' or 'tarár' entry in EMERGENCY_FALLBACK_DICT
-        let baseVerb = findWordByEnglishPhrase("be", "VERB") || 
-                       findWordByEnglishPhrase("exist", "VERB") || 
-                       findWordByEnglishPhrase("are", "VERB");
-        
-        if (baseVerb) {
-          hasVerb = true;
-          // Handles stems for both 'tarár' -> 'tar' or fallback 'ar' -> 'ar'
-          let stem = baseVerb.k.endsWith("ar") || baseVerb.k.endsWith("ár") 
-                     ? baseVerb.k.replace(/ár$|ar$/, '') 
-                     : baseVerb.k;
-          
-          let isPast = ["was", "were"].includes(token);
-          let suffix = isPast ? "ór" : ""; // Present tense 'are' returns just the bare stem 'tar' or 'ar'
-          
-          outputComponents.push({ type: "verb", word: stem + suffix });
-          i++;
-          continue;
-        }
-      }
-      // ==========================================
-
+      // ==========================================================
+      // 4. DICTIONARY ENTRY GLOSS ASSIGNMENT
+      // ==========================================================
       if (matchedEntry) {
         let role = hasVerb ? "object" : "subject";
         if (matchedEntry.t === "PRON") {
@@ -894,7 +883,6 @@ if (isVerbChain) {
       if (token !== "/") outputComponents.push({ type: "unknown", word: `[${token}]` });
       i++;
     }
-
     let finalOrder = [];
     let subjs = outputComponents.filter(c => c.role === "subject");
     let objs = outputComponents.filter(c => c.role === "object");
