@@ -662,6 +662,8 @@ function doTranslate() {
 
       let matchedEntry = null;
       let matchLength = 0;
+      let isEnglishPlural = false;
+
       for (let len = Math.min(5, words.length - i); len >= 1; len--) {
         let subPhrase = words.slice(i, i + len).join(" ");
         let normalizedPhrase = subPhrase.replace(/\s+\/\s+/g, "/");
@@ -670,6 +672,27 @@ function doTranslate() {
           matchedEntry = found;
           matchLength = len;
           break;
+        }
+      }
+
+      // If no match, try stripping English plural suffixes from the last word
+      if (!matchedEntry && token.length > 2) {
+        let singularCandidates = [];
+        if (token.endsWith("ies"))       singularCandidates.push(token.slice(0, -3) + "y"); // cities→city
+        else if (token.endsWith("ves"))  singularCandidates.push(token.slice(0, -3) + "f"); // leaves→leaf
+        else if (token.endsWith("es"))   singularCandidates.push(token.slice(0, -2));        // houses→house
+        if (token.endsWith("s"))         singularCandidates.push(token.slice(0, -1));        // barons→baron
+
+        for (let singular of singularCandidates) {
+          let found = findWordByEnglishPhrase(singular) || findWordByEnglishPhrase(
+            words.slice(i, i + 1).map((w, j) => j === 0 ? singular : w).join(" ")
+          );
+          if (found && (found.t === "NOUN" || found.t === "NAME")) {
+            matchedEntry = found;
+            matchLength = 1;
+            isEnglishPlural = true;
+            break;
+          }
         }
       }
 
@@ -750,7 +773,7 @@ function doTranslate() {
           }
           outputComponents.push({ type: "pronoun", role: role, word: finalPron });
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
-          let isPlural = words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]);
+          let isPlural = isEnglishPlural || (words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]));
           let cls = detectNounClass(matchedEntry.k);
           let inflected = matchedEntry.k;
           let targetCase = role === "object" ? "accusative" : "nominative";
