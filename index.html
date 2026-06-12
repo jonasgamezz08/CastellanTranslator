@@ -562,21 +562,36 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
     let sRoot = endsInS ? r.slice(0, -1) : r;
 
     if (cls === "1st") {
-      if ((endsInS && cl === sRoot + "ssa") || (!endsInS && cl === r + "a") || cl === r + "á") 
-        return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
-      
-      // Accusative Singular Fix: accepts both kasse and kasé variants cleanly without overlapping systems
-      if ((endsInS && (cl === sRoot + "sse" || cl === sRoot + "sé")) || (!endsInS && (cl === r + "e" || cl === r + "é"))) 
-        return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
-      
-      // Accusative Plural Fix: aligns correctly to recognize the -éa inflection profile
-      if ((endsInS && cl === sRoot + "ssé") || cl === r + "éa") 
-        return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
-      
-      if (cl === r + "i") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: "Class: 1st\nCase: genitive\nNumber: singular" };
-      if (cl === r + "ía") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: "Class: 1st\nCase: genitive\nNumber: plural" };
-      if (cl === r + "u") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: "Class: 1st\nCase: instrumental\nNumber: singular" };
-      if (cl === r + "úa") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "plural", meta: "Class: 1st\nCase: instrumental\nNumber: plural" };
+      const ACCENT_MAP_M = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+      function stripAccentM(s) {
+        return s.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP_M[c]).split('').reverse().join('');
+      }
+      const VOWELS_M = "aeiouáéíóú";
+      let consonantFinal = r.length > 0 && !endsInS && !VOWELS_M.includes(r[r.length - 1]);
+      let finalCons = consonantFinal ? r[r.length - 1] : '';
+      let stripped = consonantFinal ? stripAccentM(r) : r;
+
+      // Nominative plural
+      if (endsInS && cl === sRoot + "ssa") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
+      if (consonantFinal && (cl === r + finalCons + "a" || cl === stripped + "á")) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
+      if (!endsInS && !consonantFinal && cl === r + "a") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
+
+      // Accusative singular
+      if (endsInS && (cl === sRoot + "sse" || cl === sRoot + "sé")) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
+      if (consonantFinal && (cl === r + finalCons + "e" || cl === stripped + "é")) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
+      if (!endsInS && !consonantFinal && (cl === r + "e" || cl === r + "é")) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
+
+      // Accusative plural
+      if (endsInS && cl === sRoot + "ssé") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
+      if (cl === stripped + "éa" || cl === r + "éa") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
+
+      // Genitive
+      if (cl === r + "i")                return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive",      num: "singular", meta: "Class: 1st\nCase: genitive\nNumber: singular" };
+      if (cl === stripped + "ía" || cl === r + "ía") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive",      num: "plural",   meta: "Class: 1st\nCase: genitive\nNumber: plural" };
+
+      // Instrumental
+      if (cl === r + "u")                return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental",  num: "singular", meta: "Class: 1st\nCase: instrumental\nNumber: singular" };
+      if (cl === stripped + "úa" || cl === r + "úa") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental",  num: "plural",   meta: "Class: 1st\nCase: instrumental\nNumber: plural" };
     } else {
       let stemVowel = detectVocalicStem(x.k);
       let pureStem = x.k.endsWith('s') ? r.slice(0, -1) : r;
