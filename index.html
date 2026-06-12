@@ -338,8 +338,13 @@ td {
 <div id="tab-dictionary" class="panel">
   <div class="card">
     <div class="card-title">Active Lexicon Index Search</div>
-    <input type="text" id="dict-search" placeholder="Type here to search words...">
-    <div id="dict-list" style="margin-top:1rem; max-height:400px; overflow-y:auto;"></div>
+    <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
+      <input type="text" id="dict-search" placeholder="Type here to search words..." style="width: 100%;">
+      <div style="white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--amber); background: rgba(200,146,42,0.1); padding: 6px 12px; border-radius: var(--radius); border: 1px solid rgba(200,146,42,0.2);">
+        Total Words: <span id="total-counter" style="color: var(--green-light); font-weight: bold;">0</span>
+      </div>
+    </div>
+    <div id="dict-list" style="max-height:400px; overflow-y:auto;"></div>
   </div>
 </div>
 
@@ -1084,6 +1089,9 @@ function renderDict() {
       x.t.toLowerCase().includes(query)
     );
   }
+
+  const totalCounterEl = document.getElementById('total-counter');
+  if (totalCounterEl) totalCounterEl.textContent = filtered.length;
 
   if (filtered.length === 0) {
     listEl.innerHTML = '<p style="color:var(--text-muted); font-style:italic; padding: 0.5rem 0;">No index items match search coordinates.</p>';
