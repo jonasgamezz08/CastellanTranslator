@@ -408,17 +408,35 @@ function findWordByEnglish(token, typeFilter = null) {
   let query = token.toLowerCase().trim();
   if (query.startsWith("to ")) query = query.substring(3);
   
-  return CORE_DICT.find(x => {
-    if (typeFilter && x.t !== typeFilter) return false;
-    
-    let options = x.e.toLowerCase().split(/[,;\/]+|\bor\b/).map(o => {
-      let str = o.trim();
-      if (str.startsWith("to ")) str = str.substring(3);
-      return str;
+  const matchQuery = (q) => {
+    return CORE_DICT.find(x => {
+      if (typeFilter && x.t !== typeFilter) return false;
+      
+      let options = x.e.toLowerCase().split(/[,;\/]+|\bor\b/).map(o => {
+        let str = o.trim();
+        if (str.startsWith("to ")) str = str.substring(3);
+        return str;
+      });
+      
+      return options.some(opt => opt === q || q.includes(opt));
     });
-    
-    return options.some(opt => opt === query || opt.includes(query));
-  });
+  };
+
+  // Try direct lookup
+  let found = matchQuery(query);
+  
+  // Plural fallback logic for English words matching base roots
+  if (!found && query.endsWith('s')) {
+    if (query.endsWith('ies')) {
+      found = matchQuery(query.slice(0, -3) + 'y');
+    } else if (query.endsWith('es')) {
+      found = matchQuery(query.slice(0, -2));
+      if (!found) found = matchQuery(query.slice(0, -1));
+    } else {
+      found = matchQuery(query.slice(0, -1));
+    }
+  }
+  return found;
 }
 
 function detectNounClass(w) {
@@ -589,9 +607,27 @@ function doTranslate() {
     let words = input.toLowerCase().replace(/[,!?\.;:'"]/g, '').split(/\s+/);
     let output = [];
     let i = 0;
+    
+    // Syntactic context trackers
+    let hasVerb = false;
+    let nextNounCase = "nominative";
 
     while (i < words.length) {
       let token = words[i];
+
+      // STEP A: INTERCEPT AND OMIT ARTICLES 
+      if (token === "the") {
+        // If a verb has already passed, a definite article implies an accusative Direct Object
+        nextNounCase = hasVerb ? "accusative" : "nominative";
+        i++;
+        continue;
+      }
+      if (token === "a" || token === "an") {
+        // Indefinite direct objects remain nominative by default
+        nextNounCase = "nominative";
+        i++;
+        continue;
+      }
 
       let foundPron = findWordByEnglish(token, "PRON");
       if (foundPron) {
@@ -625,6 +661,7 @@ function doTranslate() {
 
         let baseVerb = findWordByEnglish(verbToken, "VERB");
         if (baseVerb) {
+          hasVerb = true; // Mark verb occurrence
           let stem = baseVerb.k.replace(/ár$|ar$/, '');
           let suffix = "";
 
@@ -648,6 +685,7 @@ function doTranslate() {
 
       let singleVerb = findWordByEnglish(token, "VERB");
       if (singleVerb) {
+        hasVerb = true; // Mark verb occurrence
         let reflSingle = (i + 1 < words.length && ["myself", "yourself", "himself", "herself", "itself", "ourselves", "themselves"].includes(words[i+1]));
         let stem = singleVerb.k.replace(/ár$|ar$/, '');
         let isPast = token.endsWith("ed") || ["ate", "spoke", "did", "fell", "adorned"].includes(token);
@@ -655,7 +693,53 @@ function doTranslate() {
         output.push(stem + suffix); i += reflSingle ? 2 : 1; continue;
       }
 
+      // STEP B: NOUN RECOGNITION LAYER WITH ACCUSATIVE MORPHOLOGY PARSING
       let generalWord = findWordByEnglish(token);
+      if (generalWord && generalWord.t === "NOUN") {
+        let cleanToken = token.toLowerCase().trim();
+        let baseForms = generalWord.e.toLowerCase().split(/[,;\/]+|\bor\b/).map(o => {
+          let str = o.trim();
+          if (str.startsWith("to ")) str = str.substring(3);
+          return str;
+        });
+        
+        // Determine number configuration (Singular vs Plural)
+        let isPlural = cleanToken.endsWith('s') && !baseForms.includes(cleanToken);
+        let cls = detectNounClass(generalWord.k);
+        let inflected = generalWord.k;
+
+        if (cls === "1st") {
+          let r = generalWord.k;
+          let endsInS = r.toLowerCase().endsWith('s');
+          let sRoot = endsInS ? r.slice(0, -1) : r;
+          
+          if (nextNounCase === "accusative") {
+            if (isPlural) inflected = endsInS ? `${sRoot}ssé` : `${r}é`;
+            else inflected = endsInS ? `${sRoot}sse` : `${r}e`;
+          } else { // Nominative
+            if (isPlural) inflected = endsInS ? `${sRoot}ssa` : `${r}a`;
+            else inflected = r;
+          }
+        } else { // 2nd Class Variable Stem Configuration
+          let stem = detectVocalicStem(generalWord.k);
+          let base = generalWord.k.endsWith('s') ? generalWord.k.slice(0, -1) : generalWord.k;
+          
+          if (nextNounCase === "accusative") {
+            if (isPlural) inflected = base + stem + "n"; // e.g., varan
+            else inflected = base; // e.g., var
+          } else { // Nominative
+            if (isPlural) inflected = base + "a";
+            else inflected = generalWord.k;
+          }
+        }
+
+        output.push(inflected);
+        nextNounCase = "nominative"; // Reset context parameter after consumption
+        i++;
+        continue;
+      }
+
+      // Fallback for adjectives, unresolved words, etc. (Preserves target adjective alignment)
       output.push(generalWord ? generalWord.k : `[${token}]`); i++;
     }
     box.innerHTML = `<p><strong>Synthesized Alignment Matrix:</strong> ${output.join(" ")}</p>`;
