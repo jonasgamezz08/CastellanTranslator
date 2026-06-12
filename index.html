@@ -754,8 +754,33 @@ function doTranslate() {
       } else if (token === "had" && words[i+1]) {
         clauseTime = "past"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
       } else if ((token === "am" || token === "is" || token === "are") && words[i+1]) {
-        clauseTime = "present"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
-      } else if ((token === "was" || token === "were") && words[i+1]) {
+  // Check if the next word is actually meant to be a continuous verb in your dictionary
+  let nextWordIsVerb = findWordByEnglishPhrase(words[i+1], "VERB");
+  
+  if (nextWordIsVerb) {
+    clauseTime = "present"; 
+    clauseAspect = "continuous"; 
+    verbToken = words[i+1]; 
+    skipCount = 2; 
+    isVerbChain = true;
+  } else {
+    // If the next word isn't a verb, treat 'are' as a standalone main verb!
+    isVerbChain = false; 
+  }
+}
+else if ((token === "was" || token === "were") && words[i+1]) {
+  let nextWordIsVerb = findWordByEnglishPhrase(words[i+1], "VERB");
+  
+  if (nextWordIsVerb) {
+    clauseTime = "past"; 
+    clauseAspect = "continuous"; 
+    verbToken = words[i+1]; 
+    skipCount = 2; 
+    isVerbChain = true;
+  } else {
+    isVerbChain = false;
+  }
+} else if ((token === "was" || token === "were") && words[i+1]) {
         clauseTime = "past"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
       }
 
