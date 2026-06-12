@@ -817,15 +817,15 @@ if (isVerbChain) {
       // ADD THIS NEW COPULA VERB INTERCEPTOR HERE:
       // ==========================================
       if (["am", "is", "are", "was", "were"].includes(token)) {
-        // Force look up your castellan verb (e.g. searching "be" or "exist" in dictionary)
-        // Adjust "be" to match the exact English definition string you wrote in your JSON for 'tarár'
+        // Find 'tarár' by looking up its definition in your JSON
         let baseVerb = findWordByEnglishPhrase("be", "VERB") || findWordByEnglishPhrase("exist", "VERB");
         
         if (baseVerb) {
           hasVerb = true;
-          let stem = baseVerb.k.replace(/ár$|ar$/, '');
+          let stem = baseVerb.k.replace(/ár$|ar$/, ''); // 'tarár' -> 'tar'
           let isPast = ["was", "were"].includes(token);
-          let suffix = isPast ? "ór" : "ár"; // -ór for past, -ár for present simple direct
+          let suffix = isPast ? "ór" : ""; // If present plural ('are'), you might want just the stem 'tar' or suffix 'ár'
+          
           outputComponents.push({ type: "verb", word: stem + suffix });
           i++;
           continue;
@@ -901,12 +901,20 @@ if (isVerbChain) {
     let adjs = outputComponents.filter(c => c.type === "adjective");
     let others = outputComponents.filter(c => !c.role && c.type !== "verb" && c.type !== "adjective");
 
-    if (subjs.length > 0 || objs.length > 0 || vbs.length > 0 || adjs.length > 0) {
+    if (subjs.length > 0 || objs.length > 0 || vbs.length > 0) {
+      // 1. Subject goes first
       subjs.forEach(s => finalOrder.push(s.word));
+      
+      // 2. Objects and Adjectives (including 'unknown/other' descriptive words) go in the middle
       objs.forEach(o => finalOrder.push(o.word));
-      adjs.forEach(a => finalOrder.push(a.word));
-      vbs.forEach(v => finalOrder.push(v.word));
       others.forEach(oth => finalOrder.push(oth.word));
+      
+      // 3. Verb is strictly forced to the absolute end
+      vbs.forEach(v => {
+        if (v && v.word) {
+          finalOrder.push(v.word);
+        }
+      });
     } else {
       outputComponents.forEach(c => finalOrder.push(c.word));
     }
