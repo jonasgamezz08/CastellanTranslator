@@ -838,18 +838,56 @@ function doDeclension() {
   let endsInS = r.endsWith('s');
   let sRoot = endsInS ? r.slice(0, -1) : r;
 
+  // Strip the last accented vowel in the stem (used when the suffix carries its own accent)
+  const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+  function stripStemAccent(stem) {
+    // Reverse, replace the first accented vowel found, reverse back
+    return stem.split('').reverse().join('')
+      .replace(/[áéíóú]/, c => ACCENT_MAP[c])
+      .split('').reverse().join('');
+  }
+
+  // Check if the word ends in a consonant (for consonant-doubling rule)
+  const VOWELS = "aeiouáéíóú";
+  function endsInConsonant(s) {
+    return s.length > 0 && !VOWELS.includes(s[s.length - 1]);
+  }
+
   let nomSing, nomPlur, accSing, accPlur, genSing, genPlur, insSing, insPlur;
 
   if (cls === "1st") {
     nomSing = w;
-    nomPlur = endsInS ? sRoot + "ssa" : r + "a";
-    // Fixed paradigm calculation parameters precisely here as requested
-    accSing = endsInS ? `${sRoot}sse / ${sRoot}sé` : `${r}e / ${r}é`;
-    accPlur = `${r}éa`;
-    genSing = r + "i";
-    genPlur = r + "ía";
-    insSing = r + "u";
-    insPlur = r + "úa";
+
+    if (endsInS) {
+      // Words ending in -s: double the s → -ssa / accented variant -sá (strip stem accent)
+      nomPlur = sRoot + "ssa";
+      accSing = `${sRoot}sse / ${stripStemAccent(sRoot)}sé`;
+      accPlur = stripStemAccent(r) + "éa";
+      genSing = r + "i";
+      genPlur = stripStemAccent(r) + "ía";
+      insSing = r + "u";
+      insPlur = stripStemAccent(r) + "úa";
+    } else if (endsInConsonant(r)) {
+      // Words ending in a consonant: double final consonant + vowel / OR strip accent + accented suffix vowel
+      let finalCons = r[r.length - 1];
+      let stripped = stripStemAccent(r);
+      nomPlur = `${r}${finalCons}a / ${stripped}á`;
+      accSing = `${r}${finalCons}e / ${stripped}é`;
+      accPlur = stripped + "éa";
+      genSing = r + "i";
+      genPlur = stripped + "ía";
+      insSing = r + "u";
+      insPlur = stripped + "úa";
+    } else {
+      // Words ending in a vowel: plain suffix append
+      nomPlur = r + "a";
+      accSing = `${r}e / ${r}é`;
+      accPlur = r + "éa";
+      genSing = r + "i";
+      genPlur = r + "ía";
+      insSing = r + "u";
+      insPlur = r + "úa";
+    }
   } else {
     let stem = detectVocalicStem(w);
     let base = endsInS ? r.slice(0, -1) : r;
