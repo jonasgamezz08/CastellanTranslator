@@ -448,16 +448,24 @@ function inflectEnglishVerb(baseEnglish, time, aspect) {
   const getForms = (v) => {
     v = v.trim();
     const irregulars = {
-      "eat": { past: "ate", ing: "eating", ppart: "eaten" },
-      "speak": { past: "spoke", ing: "speaking", ppart: "spoken" },
-      "do": { past: "did", ing: "doing", ppart: "done" },
-      "fall": { past: "fell", ing: "falling", ppart: "fallen" }
+      "be":    { past: "was/were", ing: "being",    ppart: "been",   pres3sg: "is" },
+      "exist": { past: "existed",  ing: "existing", ppart: "existed", pres3sg: "exists" },
+      "eat":   { past: "ate",      ing: "eating",   ppart: "eaten" },
+      "speak": { past: "spoke",    ing: "speaking", ppart: "spoken" },
+      "do":    { past: "did",      ing: "doing",    ppart: "done" },
+      "fall":  { past: "fell",     ing: "falling",  ppart: "fallen" }
     };
-    return irregulars[v] || {
+    const forms = irregulars[v] || {
       past: v.endsWith('e') ? v + "d" : v + "ed",
       ing: v.endsWith('e') ? v.slice(0, -1) + "ing" : v + "ing",
       ppart: v.endsWith('e') ? v + "d" : v + "ed"
     };
+    // Default present 3sg: add -s, or -es for sibilant endings
+    if (!forms.pres3sg) {
+      forms.pres3sg = (v.endsWith('s') || v.endsWith('sh') || v.endsWith('ch') || v.endsWith('x') || v.endsWith('z'))
+        ? v + "es" : v + "s";
+    }
+    return forms;
   };
 
   const parts = cleaned.split('/');
@@ -473,7 +481,7 @@ function inflectEnglishVerb(baseEnglish, time, aspect) {
     if (aspect === "perfect") return "had " + parts.map(p => getForms(p).ppart).join('/');
   }
   if (time === "present") {
-    if (aspect === "simple") return parts.join('/');
+    if (aspect === "simple") return parts.map(p => getForms(p).pres3sg).join('/');
     if (aspect === "continuous") return "is/are " + parts.map(p => getForms(p).ing).join('/');
     if (aspect === "perfect") return "has/have " + parts.map(p => getForms(p).ppart).join('/');
   }
