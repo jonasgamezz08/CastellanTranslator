@@ -722,33 +722,38 @@ function doTranslate() {
 
       if (token === "will" && words[i+1] === "have" && words[i+2]) {
         clauseTime = "future"; clauseAspect = "perfect"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
-      } else if (token === "will" && words[i+1] === "be" && words[i+2]) {
-        clauseTime = "future"; clauseAspect = "continuous"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+      } else if (token === "will" && words[i+1] === "be") {
+        if (words[i+2] && words[i+2].endsWith("ing")) {
+          // Future continuous: "will be running"
+          clauseTime = "future"; clauseAspect = "continuous"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+        } else {
+          // Future simple copula: "will be" → tir
+          hasVerb = true;
+          outputComponents.push({ type: "verb", word: "tir" });
+          i += 2;
+          continue;
+        }
       } else if (token === "will" && words[i+1]) {
         clauseTime = "future"; clauseAspect = "simple"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
       } else if ((token === "have" || token === "has") && words[i+1]) {
         clauseTime = "present"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
       } else if (token === "had" && words[i+1]) {
         clauseTime = "past"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
-      } else if ((token === "am" || token === "is" || token === "are") && words[i+1]) {
-        // Only treat as continuous aux if next word is actually a present participle (-ing)
-        if (words[i+1].endsWith("ing")) {
+      } else if (token === "am" || token === "is" || token === "are") {
+        if (words[i+1] && words[i+1].endsWith("ing")) {
           clauseTime = "present"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
         } else {
-          // Standalone copula — translate as tar (present simple)
           hasVerb = true;
           outputComponents.push({ type: "verb", word: "tar" });
           i++;
           continue;
         }
-      } else if ((token === "was" || token === "were") && words[i+1]) {
-        // Only treat as continuous aux if next word is actually a present participle (-ing)
-        if (words[i+1].endsWith("ing")) {
+      } else if (token === "was" || token === "were") {
+        if (words[i+1] && words[i+1].endsWith("ing")) {
           clauseTime = "past"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
         } else {
-          // Standalone copula past — translate as tarór
           hasVerb = true;
-          outputComponents.push({ type: "verb", word: "tarór" });
+          outputComponents.push({ type: "verb", word: "tor" });
           i++;
           continue;
         }
