@@ -795,7 +795,7 @@ function doTranslate() {
               if (isPlural) inflected = base + stem + "n";
               else inflected = base;
             } else {
-              if (isPlural) inflected = base + "a";
+              if (isPlural) inflected = base + "a / " + base + "sa";
             }
           }
           outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected });
