@@ -1292,6 +1292,10 @@ function renderDict() {
   const listEl = document.getElementById('dict-list');
   if (!listEl) return;
 
+  // Verb Counter Implementation
+  // Calculates the number of verbs in the currently visible/filtered dictionary list
+  const counterEl = document.getElementById('verb-counter');
+  
   let filtered = CORE_DICT;
   if (query) {
     filtered = CORE_DICT.filter(x => 
@@ -1299,6 +1303,11 @@ function renderDict() {
       x.e.toLowerCase().includes(query) || 
       x.t.toLowerCase().includes(query)
     );
+  }
+
+  if (counterEl) {
+    const verbCount = filtered.filter(x => x.t === "VERB").length;
+    counterEl.textContent = verbCount;
   }
 
   if (filtered.length === 0) {
