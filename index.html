@@ -388,7 +388,8 @@ const EMERGENCY_FALLBACK_DICT = [
   {k:"subadár",t:"VERB",e:"speak, talk, converse"},
   {k:"narár",t:"VERB",e:"do, make, perform"},
   {k:"suvár",t:"VERB",e:"help, aid, assist"},
-  {k:"audal",t:"VERB",e:"fall, descend, collapse, succumb"}
+  {k:"audal",t:"VERB",e:"fall, descend, collapse, succumb"},
+  {k:"tar",t:"VERB",e:"be, exist"}
 ];
 
 // Global logic for stripping stem accents dynamically
@@ -511,7 +512,7 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
       return { type: "verb", base: exactMatch.k, gloss: exactMatch.e, time: "present", aspect: "simple", mode: "direct", meta: `Mode: direct\nAspect: simple\nTime: present (Root)` };
     }
     if (exactMatch.t === "ADJ") {
-      return { type: "adjective", base: exactMatch.k, gloss: exactMatch.e, meta: `Case: nominative\nNumber: singular` };
+      return { type: "adjective", base: exactMatch.k, gloss: exactMatch.e, case: "nominative", num: "singular", meta: `Case: nominative\nNumber: singular` };
     }
     if (exactMatch.t === "NOUN") {
       let cls = exactMatch.cls || detectNounClass(exactMatch.k);
@@ -561,38 +562,32 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
     let r = x.k.toLowerCase();
     let endsInS = r.endsWith('s');
     let sRoot = endsInS ? r.slice(0, -1) : r;
-    let stripped = stripStemAccent(r);
-    let finalCons = r[r.length - 1];
-    const VOWELS = "aeiouáéíóú";
-    let isCons = finalCons && !VOWELS.includes(finalCons);
 
     if (cls === "1st") {
-      let nomPlurals = endsInS ? [sRoot + "ssa", stripStemAccent(sRoot) + "sá", stripped + "á"] : (isCons ? [r + finalCons + "a", stripped + "á", r + "á"] : [r + "a", stripped + "á", r + "á"]);
-      let accSingulars = endsInS ? [sRoot + "sse", stripStemAccent(sRoot) + "sé", sRoot + "sé", stripped + "é"] : (isCons ? [r + finalCons + "e", stripped + "é", r + "e", r + "é"] : [r + "e", r + "é", stripped + "é"]);
-      let accPlurals = endsInS ? [sRoot + "ssé", stripped + "éa", r + "éa"] : (isCons ? [stripped + "éa", r + finalCons + "éa", r + "éa"] : [r + "éa", stripped + "éa"]);
-      let genSingulars = [r + "i"];
-      let genPlurals = [stripped + "ía", r + "ía"];
-      let insSingulars = [r + "u"];
-      let insPlurals = [stripped + "úa", r + "úa"];
-
-      if (nomPlurals.includes(cl)) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
-      if (accSingulars.includes(cl)) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
-      if (accPlurals.includes(cl)) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
-      if (genSingulars.includes(cl)) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: "Class: 1st\nCase: genitive\nNumber: singular" };
-      if (genPlurals.includes(cl)) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: "Class: 1st\nCase: genitive\nNumber: plural" };
-      if (insSingulars.includes(cl)) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: "Class: 1st\nCase: instrumental\nNumber: singular" };
-      if (insPlurals.includes(cl)) return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "plural", meta: "Class: 1st\nCase: instrumental\nNumber: plural" };
+      if ((endsInS && cl === sRoot + "ssa") || (!endsInS && cl === r + "a") || cl === r + "á") 
+        return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
+      
+      if ((endsInS && (cl === sRoot + "sse" || cl === sRoot + "sé" || cl === stripStemAccent(sRoot) + "sé")) || (!endsInS && (cl === r + "e" || cl === r + "é" || cl === stripStemAccent(r) + "é"))) 
+        return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
+      
+      if ((endsInS && cl === sRoot + "ssé") || cl === r + "éa" || cl === stripStemAccent(r) + "éa") 
+        return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
+      
+      if (cl === r + "i") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: "Class: 1st\nCase: genitive\nNumber: singular" };
+      if (cl === r + "ía" || cl === stripStemAccent(r) + "ía") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: "Class: 1st\nCase: genitive\nNumber: plural" };
+      if (cl === r + "u") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: "Class: 1st\nCase: instrumental\nNumber: singular" };
+      if (cl === r + "úa" || cl === stripStemAccent(r) + "úa") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "plural", meta: "Class: 1st\nCase: instrumental\nNumber: plural" };
     } else {
       let stemVowel = detectVocalicStem(x.k);
-      let base = endsInS ? r.slice(0, -1) : r;
+      let pureStem = x.k.endsWith('s') ? r.slice(0, -1) : r;
 
-      if (cl === base + "a" || cl === base + "sa") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: nominative\nNumber: plural` };
-      if (cl === base) return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: singular` };
-      if (cl === base + stemVowel + "n" || cl === base + "n") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: plural` };
-      if (cl === base + "i") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: genitive\nNumber: singular` };
-      if (cl === base + "ya") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: genitive\nNumber: plural` };
-      if (cl === base + "u") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: instrumental\nNumber: singular` };
-      if (cl === base + "wa") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "instrumental", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: instrumental\nNumber: plural` };
+      if (cl === pureStem + "a" || cl === pureStem + "sa") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: nominative\nNumber: plural` };
+      if (cl === pureStem) return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: singular` };
+      if (cl === pureStem + stemVowel + "n" || cl === pureStem + "n") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: plural` };
+      if (cl === pureStem + "i") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: genitive\nNumber: singular` };
+      if (cl === pureStem + "ya") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: genitive\nNumber: plural` };
+      if (cl === pureStem + "u") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: instrumental\nNumber: singular` };
+      if (cl === pureStem + "wa") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "instrumental", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: instrumental\nNumber: plural` };
     }
   }
 
@@ -637,39 +632,80 @@ function doTranslate() {
     let analyzedTokens = [];
     let literalGlosser = [];
 
+    function pluralizeGloss(gloss) {
+        return gloss.split(' / ').map(w => {
+            let trimmed = w.trim();
+            if (trimmed.endsWith('y') && !/[aeiou]y$/i.test(trimmed)) return trimmed.slice(0, -1) + 'ies';
+            if (trimmed.endsWith('s') || trimmed.endsWith('sh') || trimmed.endsWith('ch') || trimmed.endsWith('x') || trimmed.endsWith('z')) return trimmed + 'es';
+            return trimmed + 's';
+        }).join(' / ');
+    }
+
+    let hasGenitivePronoun = false;
+
     tokens.forEach((tok, i) => {
-      let res = analyzeWordMorphology(tok, tokens, i);
-      if (res) {
-        analyzedTokens.push(res);
-        literalGlosser.push(res.gloss.replace(/,\s*/g, ' / '));
-      } else {
-        analyzedTokens.push({ type: "unknown", gloss: tok, base: tok });
-        literalGlosser.push(`[${tok}]`);
-      }
+        let res = analyzeWordMorphology(tok, tokens, i);
+        if (res) {
+            let structGloss = res.gloss.replace(/,\s*/g, ' / ');
+            if (res.case && res.case !== "nominative" && res.case !== "variant") {
+                res.structGloss = structGloss + "." + res.case.substring(0,3).toUpperCase();
+            } else {
+                res.structGloss = structGloss;
+            }
+            
+            let fluidStr = structGloss;
+            if (res.type === "noun") {
+                if (res.num === "plural") fluidStr = pluralizeGloss(fluidStr);
+                if (res.case === "genitive") {
+                    fluidStr = "of the " + fluidStr;
+                } else if (res.case === "accusative" || res.case === "nominative") {
+                    let prefix = hasGenitivePronoun ? "" : "the ";
+                    fluidStr = prefix + fluidStr;
+                } else if (res.case === "instrumental") {
+                    let prefix = hasGenitivePronoun ? "with " : "with the ";
+                    fluidStr = prefix + fluidStr;
+                }
+                hasGenitivePronoun = false;
+            } else if (res.type === "pronoun") {
+                if (res.case === "genitive") hasGenitivePronoun = true;
+                else hasGenitivePronoun = false;
+            } else {
+                hasGenitivePronoun = false;
+            }
+            res.fluidGloss = fluidStr;
+            
+            analyzedTokens.push(res);
+            literalGlosser.push(res.structGloss);
+        } else {
+            analyzedTokens.push({ type: "unknown", gloss: tok, base: tok, fluidGloss: tok });
+            literalGlosser.push(`[${tok}]`);
+        }
     });
 
     let subjs = [], objs = [], vbs = [], others = [];
     analyzedTokens.forEach(t => {
-      if (t.type === "verb") vbs.push(t);
-      else if (t.type === "pronoun" || t.type === "noun") {
-        if (t.case === "accusative" || t.case === "instrumental") objs.push(t);
-        else subjs.push(t);
-      } else if (t.type !== "unknown") others.push(t);
+        if (t.type === "verb") vbs.push(inflectEnglishVerb(t.gloss, t.time || "present", t.aspect || "simple"));
+        else if (t.type === "pronoun" || t.type === "noun") {
+            if (t.case === "accusative" || t.case === "instrumental") objs.push(t.fluidGloss);
+            else subjs.push(t.fluidGloss);
+        } else if (t.type !== "unknown") others.push(t.fluidGloss);
     });
 
     let fluidTranslation = "";
     if (vbs.length > 0) {
-      let subjStr = subjs.map(s => s.gloss.replace(/,\s*/g, ' / ')).join(" ") || "It";
-      let objStr = objs.map(o => o.gloss.replace(/,\s*/g, ' / ')).join(" ");
-      let verbNode = vbs[0];
-      let inflectedVerb = inflectEnglishVerb(verbNode.gloss, verbNode.time || "present", verbNode.aspect || "simple");
-      
-      fluidTranslation = subjStr + " " + inflectedVerb + (objStr ? " " + objStr : "");
-      if (others.length > 0) fluidTranslation += " " + others.map(o => o.gloss.replace(/,\s*/g, ' / ')).join(" ");
-      fluidTranslation = fluidTranslation.trim();
-      fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + ".";
+        let subjStr = subjs.join(" ") || "It";
+        let objStr = objs.join(" ");
+        let verbNode = vbs[0];
+        
+        fluidTranslation = subjStr + " " + verbNode + (objStr ? " " + objStr : "");
+        if (others.length > 0) fluidTranslation += " " + others.join(" ");
+        fluidTranslation = fluidTranslation.trim();
+        fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1);
     } else {
-      fluidTranslation = literalGlosser.join(" ");
+        fluidTranslation = analyzedTokens.map(t => t.fluidGloss).join(" ");
+        if (fluidTranslation) {
+            fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1);
+        }
     }
 
     box.innerHTML = `
