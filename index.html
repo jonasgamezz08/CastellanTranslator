@@ -555,7 +555,7 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
     }
   }
 
-  for (let x of CORE_DICT.filter(d => d.t === "NOUN")) {
+  for (let x of CORE_DICT.filter(d => d.t === "NOUN" || d.t === "NAME")) {
     let cls = detectNounClass(x.k);
     let r = x.k.toLowerCase();
     let endsInS = r.endsWith('s');
@@ -608,10 +608,41 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
   }
 
   for (let x of CORE_DICT.filter(d => d.t === "ADJ")) {
-    let baseStem = x.k.slice(0, -2);
-    if (cl === x.k || (cl.startsWith(baseStem) && (cl.endsWith("íl") || cl.endsWith("ál")))) {
-      let stemChar = x.k.endsWith("íl") ? "i" : "a";
-      return { type: "adjective", base: x.k, gloss: x.e, meta: `Ending Stem: ${stemChar}\nCase: variant\nNumber: variant` };
+    const ACCENT_MAP_A = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+    function stripAccentA(s) {
+      return s.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP_A[c]).split('').reverse().join('');
+    }
+    const VOWELS_A = "aeiouáéíóú";
+    let base = x.k.toLowerCase();
+    let lastCh = base[base.length - 1];
+    let consFinal = !VOWELS_A.includes(lastCh);
+    let alreadyDoubled = consFinal && base.length >= 2 && base[base.length - 2] === lastCh;
+    let gem = consFinal ? (alreadyDoubled ? '' : lastCh) : '';
+    let stripped = stripAccentA(base);
+
+    // Exact base form
+    if (cl === base) return { type: "adjective", base: x.k, gloss: x.e, num: "singular", meta: `Number: singular` };
+
+    if (consFinal) {
+      // Nominative plural: doubled+a  or  stripped+á
+      if (cl === base + gem + "a" || cl === stripped + "á")
+        return { type: "adjective", base: x.k, gloss: x.e, num: "plural", meta: `Number: plural` };
+      // Accusative singular: doubled+e  or  stripped+é
+      if (cl === base + gem + "e" || cl === stripped + "é")
+        return { type: "adjective", base: x.k, gloss: x.e, num: "singular", meta: `Number: singular (accusative)` };
+      // Accusative plural: stripped+éa
+      if (cl === stripped + "éa")
+        return { type: "adjective", base: x.k, gloss: x.e, num: "plural", meta: `Number: plural (accusative)` };
+      // Genitive plural: stripped+ía
+      if (cl === stripped + "ía")
+        return { type: "adjective", base: x.k, gloss: x.e, num: "plural", meta: `Number: plural (genitive)` };
+      // Instrumental plural: stripped+úa
+      if (cl === stripped + "úa")
+        return { type: "adjective", base: x.k, gloss: x.e, num: "plural", meta: `Number: plural (instrumental)` };
+    } else {
+      // Vowel-final adjective plural
+      if (cl === base + "a")
+        return { type: "adjective", base: x.k, gloss: x.e, num: "plural", meta: `Number: plural` };
     }
   }
   return null;
