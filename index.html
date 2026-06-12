@@ -711,11 +711,6 @@ function doTranslate() {
     while (i < words.length) {
       let token = words[i];
 
-      if (["are", "is", "am"].includes(token)) {
-        i++;
-        continue;
-      }
-
       let matchedEntry = null;
       let matchLength = 0;
       
@@ -814,17 +809,23 @@ if (isVerbChain) {
       }
 
       // ==========================================
-      // ADD THIS NEW COPULA VERB INTERCEPTOR HERE:
+      // COPULA VERB INTERCEPTOR 
       // ==========================================
       if (["am", "is", "are", "was", "were"].includes(token)) {
-        // Find 'tarár' by looking up its definition in your JSON
-        let baseVerb = findWordByEnglishPhrase("be", "VERB") || findWordByEnglishPhrase("exist", "VERB");
+        // Fallback checks to find your 'ar' or 'tarár' entry in EMERGENCY_FALLBACK_DICT
+        let baseVerb = findWordByEnglishPhrase("be", "VERB") || 
+                       findWordByEnglishPhrase("exist", "VERB") || 
+                       findWordByEnglishPhrase("are", "VERB");
         
         if (baseVerb) {
           hasVerb = true;
-          let stem = baseVerb.k.replace(/ár$|ar$/, ''); // 'tarár' -> 'tar'
+          // Handles stems for both 'tarár' -> 'tar' or fallback 'ar' -> 'ar'
+          let stem = baseVerb.k.endsWith("ar") || baseVerb.k.endsWith("ár") 
+                     ? baseVerb.k.replace(/ár$|ar$/, '') 
+                     : baseVerb.k;
+          
           let isPast = ["was", "were"].includes(token);
-          let suffix = isPast ? "ór" : ""; // If present plural ('are'), you might want just the stem 'tar' or suffix 'ár'
+          let suffix = isPast ? "ór" : ""; // Present tense 'are' returns just the bare stem 'tar' or 'ar'
           
           outputComponents.push({ type: "verb", word: stem + suffix });
           i++;
@@ -902,14 +903,15 @@ if (isVerbChain) {
     let others = outputComponents.filter(c => !c.role && c.type !== "verb" && c.type !== "adjective");
 
     if (subjs.length > 0 || objs.length > 0 || vbs.length > 0) {
-      // 1. Subject goes first
+      // 1. Subject goes first (e.g., Varasa / Varaa)
       subjs.forEach(s => finalOrder.push(s.word));
       
-      // 2. Objects and Adjectives (including 'unknown/other' descriptive words) go in the middle
+      // 2. Objects and Adjectives go in the middle (e.g., kila / kiá)
       objs.forEach(o => finalOrder.push(o.word));
+      adjs.forEach(a => finalOrder.push(a.word));
       others.forEach(oth => finalOrder.push(oth.word));
       
-      // 3. Verb is strictly forced to the absolute end
+      // 3. Verb is strictly forced to the absolute end (e.g., tar)
       vbs.forEach(v => {
         if (v && v.word) {
           finalOrder.push(v.word);
