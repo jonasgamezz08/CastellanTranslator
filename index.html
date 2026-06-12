@@ -300,7 +300,7 @@ td {
       <label><input type="radio" name="direction" value="kes-eng" checked> Kestelál → English</label>
       <label><input type="radio" name="direction" value="eng-kes"> English → Kestelál</label>
     </div>
-    <textarea id="translate-input" placeholder="Enter text... (Try: 'Myp on sutír' or 'Fazen is great')"></textarea>
+    <textarea id="translate-input" placeholder="Enter text... (Try: 'Myp on sutír' or 'Meep / The Light Incarnate will save/guard/protect us.')"></textarea>
     <button class="btn" style="margin-top:0.7rem" onclick="doTranslate()">Translate</button>
     <div id="translate-result" class="result-box" style="display:none"></div>
   </div>
@@ -328,7 +328,7 @@ td {
   <div class="card">
     <div class="card-title">Verb Systems</div>
     <div class="grid-2">
-      <input type="text" id="verb-input" placeholder="Infinitive (e.g. brenár, sutár, tar)">
+      <input type="text" id="verb-input" placeholder="Infinitive (e.g. brenár, sutár, subadár)">
       <button class="btn" onclick="doConjugate()">Generate Verb Matrix</button>
     </div>
     <div id="verb-result"></div>
@@ -388,8 +388,7 @@ const EMERGENCY_FALLBACK_DICT = [
   {k:"subadár",t:"VERB",e:"speak, talk, converse"},
   {k:"narár",t:"VERB",e:"do, make, perform"},
   {k:"suvár",t:"VERB",e:"help, aid, assist"},
-  {k:"audal",t:"VERB",e:"fall, descend, collapse, succumb"},
-  {k:"tar",t:"VERB",e:"be, exist, to be, to exist"}
+  {k:"audal",t:"VERB",e:"fall, descend, collapse, succumb"}
 ];
 
 async function initializeDataLayer() {
@@ -404,42 +403,653 @@ async function initializeDataLayer() {
   renderDict();
 }
 
-function getEnglishVerbBase(v) {
-  v = v.toLowerCase().trim();
-  const irregularsInverse = {
-    "was": "be", "were": "be", "been": "be", "being": "be", "is": "be", "am": "be", "are": "be",
-    "ate": "eat", "eating": "eat", "eaten": "eat", "eats": "eat",
-    "spoke": "speak", "speaking": "speak", "spoken": "speak", "speaks": "speak",
-    "did": "do", "doing": "do", "done": "do", "does": "do",
-    "fell": "fall", "falling": "fall", "fallen": "fall", "falls": "fall",
-    "talked": "talk", "talking": "talk", "talks": "talk",
-    "saved": "save", "saving": "save", "saves": "save",
-    "guarded": "guard", "guarding": "guard", "guards": "guard",
-    "protected": "protect", "protecting": "protect", "protects": "protect",
-    "conversed": "converse", "conversing": "converse", "converses": "converse",
-    "helped": "help", "helping": "help", "helps": "help",
-    "consumed": "consume", "consuming": "consume", "consumes": "consume",
-    "dined": "dine", "dining": "dine", "dines": "dine"
-  };
-  if (irregularsInverse[v]) return irregularsInverse[v];
-  if (v.endsWith("ing")) return v.slice(0, -3);
-  if (v.endsWith("ed")) return v.slice(0, -2);
-  if (v.endsWith("s") && !v.endsWith("ss")) return v.slice(0, -1);
-  return v;
-}
-
 function findWordByEnglishPhrase(phrase, typeFilter = null) {
   let q = phrase.toLowerCase().trim();
   if (!q) return null;
-
-  const matches = (x, queryString) => {
+  return CORE_DICT.find(x => {
     if (typeFilter && x.t !== typeFilter) return false;
     let def = x.e.toLowerCase().trim();
-    if (def === queryString) return true;
+    if (def === q) return true;
     
     let options = def.split(/[,;\/]+|\bor\b/).map(o => o.trim());
-    if (options.some(opt => opt === queryString || queryString === opt)) return true;
+    if (options.some(opt => opt === q || q === opt)) return true;
     
-    let cleanQ = queryString.startsWith("to ") ? queryString.substring(3).trim() : queryString;
+    let cleanQ = q.startsWith("to ") ? q.substring(3).trim() : q;
     let cleanOptions = options.map(opt => opt.startsWith("to ") ? opt.substring(3).trim() : opt);
     if (cleanOptions.some(opt => opt === cleanQ || cleanQ === opt)) return true;
+    
+    return false;
+  });
+}
+
+function findWordByEnglish(token, typeFilter = null) {
+  return findWordByEnglishPhrase(token, typeFilter);
+}
+
+function detectNounClass(w) {
+  let clean = w.toLowerCase().trim();
+  let found = CORE_DICT.find(x => x.k.toLowerCase() === clean && x.t === "NOUN");
+  if (found && found.cls) return found.cls;
+  let vowelGroups = clean.match(/[aeiouáéíóú]+/g) || [];
+  if (vowelGroups.length <= 1) return "1st";
+  if (!clean.endsWith('s')) return "1st";
+  return "2nd";
+}
+
+function detectVocalicStem(w) {
+  let clean = w.toLowerCase();
+  if (clean.endsWith('s')) return clean.slice(-2, -1);
+  return clean.slice(-1);
+}
+
+function inflectEnglishVerb(baseEnglish, time, aspect) {
+  let cleaned = baseEnglish.replace(/\bto\s+/gi, '').replace(/,\s*/g, '/');
+
+  const getForms = (v) => {
+    v = v.trim();
+    const irregulars = {
+      "be":    { past: "was/were", ing: "being",    ppart: "been",   pres3sg: "is" },
+      "exist": { past: "existed",  ing: "existing", ppart: "existed", pres3sg: "exists" },
+      "eat":   { past: "ate",      ing: "eating",   ppart: "eaten" },
+      "speak": { past: "spoke",    ing: "speaking", ppart: "spoken" },
+      "do":    { past: "did",      ing: "doing",    ppart: "done" },
+      "fall":  { past: "fell",     ing: "falling",  ppart: "fallen" }
+    };
+    const forms = irregulars[v] || {
+      past: v.endsWith('e') ? v + "d" : v + "ed",
+      ing: v.endsWith('e') ? v.slice(0, -1) + "ing" : v + "ing",
+      ppart: v.endsWith('e') ? v + "d" : v + "ed"
+    };
+    // Default present 3sg: add -s, or -es for sibilant endings
+    if (!forms.pres3sg) {
+      forms.pres3sg = (v.endsWith('s') || v.endsWith('sh') || v.endsWith('ch') || v.endsWith('x') || v.endsWith('z'))
+        ? v + "es" : v + "s";
+    }
+    return forms;
+  };
+
+  const parts = cleaned.split('/');
+  
+  if (time === "future") {
+    if (aspect === "simple") return "will " + parts.join('/');
+    if (aspect === "continuous") return "will be " + parts.map(p => getForms(p).ing).join('/');
+    if (aspect === "perfect") return "will have " + parts.map(p => getForms(p).ppart).join('/');
+  }
+  if (time === "past") {
+    if (aspect === "simple") return parts.map(p => getForms(p).past).join('/');
+    if (aspect === "continuous") return "was/were " + parts.map(p => getForms(p).ing).join('/');
+    if (aspect === "perfect") return "had " + parts.map(p => getForms(p).ppart).join('/');
+  }
+  if (time === "present") {
+    if (aspect === "simple") return parts.map(p => getForms(p).pres3sg).join('/');
+    if (aspect === "continuous") return "is/are " + parts.map(p => getForms(p).ing).join('/');
+    if (aspect === "perfect") return "has/have " + parts.map(p => getForms(p).ppart).join('/');
+  }
+  return cleaned;
+}
+
+function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
+  let cl = word.toLowerCase().trim().replace(/[,!?\.;:'"]/g, '');
+  if (!cl) return null;
+
+  let exactMatch = CORE_DICT.find(x => x.k.toLowerCase() === cl);
+  if (exactMatch) {
+    if (exactMatch.t === "PRON") {
+      return { type: "pronoun", base: exactMatch.k, gloss: exactMatch.e, case: exactMatch.case || 'nominative', num: exactMatch.num || 'singular', meta: `Case: ${exactMatch.case || 'nominative'}\nNumber: ${exactMatch.num || 'singular'}` };
+    }
+    if (exactMatch.t === "PREP") {
+      return { type: "preposition", base: exactMatch.base || exactMatch.k, gloss: exactMatch.e, meta: `Form: Direct\nConnected Case: accusative` };
+    }
+    if (exactMatch.t === "VERB") {
+      return { type: "verb", base: exactMatch.k, gloss: exactMatch.e, time: "present", aspect: "simple", mode: "direct", meta: `Mode: direct\nAspect: simple\nTime: present (Root)` };
+    }
+    if (exactMatch.t === "ADJ") {
+      return { type: "adjective", base: exactMatch.k, gloss: exactMatch.e, meta: `Case: nominative\nNumber: singular` };
+    }
+    if (exactMatch.t === "NOUN") {
+      let cls = exactMatch.cls || detectNounClass(exactMatch.k);
+      return { type: "noun", class: cls, base: exactMatch.k, gloss: exactMatch.e, case: "nominative", num: "singular", meta: `Class: ${cls}\nCase: nominative\nNumber: singular` };
+    }
+  }
+
+  for (let x of CORE_DICT.filter(d => d.t === "VERB")) {
+    let stem = x.k.replace(/ár$|ar$/, '');
+    if (cl.startsWith(stem) && cl.length > stem.length) {
+      let suffix = cl.substring(stem.length);
+      let aspect = "simple", time = "present", mode = "direct";
+      let validSuffix = true;
+
+      if (suffix === "aróth" || suffix === "óth") { mode = "reflexive"; time = "past"; aspect = "simple"; }
+      else if (suffix === "aráth" || suffix === "áth") { mode = "reflexive"; time = "present"; aspect = "simple"; }
+      else if (suffix === "aríth" || suffix === "íth") { mode = "reflexive"; time = "future"; aspect = "simple"; }
+      else if (suffix === "eróth") { mode = "reflexive"; time = "past"; aspect = "continuous"; }
+      else if (suffix === "eráth") { mode = "reflexive"; time = "present"; aspect = "continuous"; }
+      else if (suffix === "eríth") { mode = "reflexive"; time = "future"; aspect = "continuous"; }
+      else if (suffix === "ayóth") { mode = "reflexive"; time = "past"; aspect = "perfect"; }
+      else if (suffix === "ayáth") { mode = "reflexive"; time = "present"; aspect = "perfect"; }
+      else if (suffix === "ayíth") { mode = "reflexive"; time = "future"; aspect = "perfect"; }
+      else if (suffix === "ór" || suffix === "or") { mode = "direct"; time = "past"; aspect = "simple"; }
+      else if (suffix === "ír" || suffix === "ir") { mode = "direct"; time = "future"; aspect = "simple"; }
+      else if (suffix === "erá") { mode = "direct"; time = "present"; aspect = "continuous"; }
+      else if (suffix === "eró") { mode = "direct"; time = "past"; aspect = "continuous"; }
+      else if (suffix === "erí") { mode = "direct"; time = "future"; aspect = "continuous"; }
+      else if (suffix === "ayá") { mode = "direct"; time = "present"; aspect = "perfect"; }
+      else if (suffix === "ayó") { mode = "direct"; time = "past"; aspect = "perfect"; }
+      else if (suffix === "ayí") { mode = "direct"; time = "future"; aspect = "perfect"; }
+      else if (suffix === "ár" || suffix === "ar") { mode = "direct"; time = "present"; aspect = "simple"; }
+      else { validSuffix = false; }
+
+      if (validSuffix) {
+        return {
+          type: "verb", base: x.k, gloss: x.e,
+          time: time, aspect: aspect, mode: mode,
+          meta: `Mode: ${mode}\nAspect: ${aspect}\nTime: ${time}`
+        };
+      }
+    }
+  }
+
+  for (let x of CORE_DICT.filter(d => d.t === "NOUN")) {
+    let cls = detectNounClass(x.k);
+    let r = x.k.toLowerCase();
+    let endsInS = r.endsWith('s');
+    let sRoot = endsInS ? r.slice(0, -1) : r;
+
+    if (cls === "1st") {
+      if ((endsInS && cl === sRoot + "ssa") || (!endsInS && cl === r + "a") || cl === r + "á") 
+        return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
+      
+      // Accusative Singular Fix: accepts both kasse and kasé variants cleanly without overlapping systems
+      if ((endsInS && (cl === sRoot + "sse" || cl === sRoot + "sé")) || (!endsInS && (cl === r + "e" || cl === r + "é"))) 
+        return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
+      
+      // Accusative Plural Fix: aligns correctly to recognize the -éa inflection profile
+      if ((endsInS && cl === sRoot + "ssé") || cl === r + "éa") 
+        return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
+      
+      if (cl === r + "i") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: "Class: 1st\nCase: genitive\nNumber: singular" };
+      if (cl === r + "ía") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: "Class: 1st\nCase: genitive\nNumber: plural" };
+      if (cl === r + "u") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: "Class: 1st\nCase: instrumental\nNumber: singular" };
+      if (cl === r + "úa") return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "instrumental", num: "plural", meta: "Class: 1st\nCase: instrumental\nNumber: plural" };
+    } else {
+      let stemVowel = detectVocalicStem(x.k);
+      let pureStem = x.k.endsWith('s') ? r.slice(0, -1) : r;
+
+      if (cl === pureStem + "a" || cl === pureStem + "sa") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: nominative\nNumber: plural` };
+      if (cl === pureStem) return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: singular` };
+      if (cl === pureStem + stemVowel + "n" || cl === pureStem + "n") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: accusative\nNumber: plural` };
+      if (cl === pureStem + "i") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "genitive", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: genitive\nNumber: singular` };
+      if (cl === pureStem + "ya") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "genitive", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: genitive\nNumber: plural` };
+      if (cl === pureStem + "u") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "instrumental", num: "singular", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: instrumental\nNumber: singular` };
+      if (cl === pureStem + "wa") return { type: "noun", class: "2nd", stem: stemVowel, base: x.k, gloss: x.e, case: "instrumental", num: "plural", meta: `Class: 2nd\nStem: ${stemVowel}\nCase: instrumental\nNumber: plural` };
+    }
+  }
+
+  for (let x of CORE_DICT.filter(d => d.t === "ADJ")) {
+    let baseStem = x.k.slice(0, -2);
+    if (cl === x.k || (cl.startsWith(baseStem) && (cl.endsWith("íl") || cl.endsWith("ál")))) {
+      let stemChar = x.k.endsWith("íl") ? "i" : "a";
+      return { type: "adjective", base: x.k, gloss: x.e, meta: `Ending Stem: ${stemChar}\nCase: variant\nNumber: variant` };
+    }
+  }
+  return null;
+}
+
+function doTranslate() {
+  const dir = document.querySelector('input[name=direction]:checked').value;
+  const input = document.getElementById('translate-input').value.trim();
+  const box = document.getElementById('translate-result');
+  if (!input) return;
+  box.style.display = "block";
+
+  if (dir === "kes-eng") {
+    let tokens = input.split(/\s+/);
+    let analyzedTokens = [];
+    let literalGlosser = [];
+
+    tokens.forEach((tok, i) => {
+      let res = analyzeWordMorphology(tok, tokens, i);
+      if (res) {
+        analyzedTokens.push(res);
+        literalGlosser.push(res.gloss.replace(/,\s*/g, ' / '));
+      } else {
+        analyzedTokens.push({ type: "unknown", gloss: tok, base: tok });
+        literalGlosser.push(`[${tok}]`);
+      }
+    });
+
+    let subjs = [], objs = [], vbs = [], others = [];
+    analyzedTokens.forEach(t => {
+      if (t.type === "verb") vbs.push(t);
+      else if (t.type === "pronoun" || t.type === "noun") {
+        if (t.case === "accusative" || t.case === "instrumental") objs.push(t);
+        else subjs.push(t);
+      } else if (t.type !== "unknown") others.push(t);
+    });
+
+    let fluidTranslation = "";
+    if (vbs.length > 0) {
+      let subjStr = subjs.map(s => s.gloss.replace(/,\s*/g, ' / ')).join(" ") || "It";
+      let objStr = objs.map(o => o.gloss.replace(/,\s*/g, ' / ')).join(" ");
+      let verbNode = vbs[0];
+      let inflectedVerb = inflectEnglishVerb(verbNode.gloss, verbNode.time || "present", verbNode.aspect || "simple");
+      
+      fluidTranslation = subjStr + " " + inflectedVerb + (objStr ? " " + objStr : "");
+      if (others.length > 0) fluidTranslation += " " + others.map(o => o.gloss.replace(/,\s*/g, ' / ')).join(" ");
+      fluidTranslation = fluidTranslation.trim();
+      fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + ".";
+    } else {
+      fluidTranslation = literalGlosser.join(" ");
+    }
+
+    box.innerHTML = `
+      <p><strong>Structural Word Gloss:</strong> <span style="color:var(--text-dim); font-style:italic;">${literalGlosser.join(" ")}</span></p>
+      <p style="margin-top:0.5rem;"><strong>Fluid Synthesized Translation:</strong> <span style="color:var(--green-light); font-weight:600;">${fluidTranslation}</span></p>
+    `;
+  } else {
+    let words = input.toLowerCase().replace(/[,!?\.;:'"]/g, '').split(/\s+/);
+    let outputComponents = [];
+    let i = 0;
+    
+    let hasVerb = false;
+    let clauseTime = "present";
+    let clauseAspect = "simple";
+    let clauseReflexive = false;
+
+    while (i < words.length) {
+      let token = words[i];
+
+      let matchedEntry = null;
+      let matchLength = 0;
+      for (let len = Math.min(5, words.length - i); len >= 1; len--) {
+        let subPhrase = words.slice(i, i + len).join(" ");
+        let normalizedPhrase = subPhrase.replace(/\s+\/\s+/g, "/");
+        let found = findWordByEnglishPhrase(subPhrase) || findWordByEnglishPhrase(normalizedPhrase);
+        if (found) {
+          matchedEntry = found;
+          matchLength = len;
+          break;
+        }
+      }
+
+      let isVerbChain = false;
+      let verbToken = "";
+      let skipCount = 0;
+
+      if (token === "will" && words[i+1] === "have" && words[i+2]) {
+        clauseTime = "future"; clauseAspect = "perfect"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+      } else if (token === "will" && words[i+1] === "be" && words[i+2]) {
+        clauseTime = "future"; clauseAspect = "continuous"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+      } else if (token === "will" && words[i+1]) {
+        clauseTime = "future"; clauseAspect = "simple"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+      } else if ((token === "have" || token === "has") && words[i+1]) {
+        clauseTime = "present"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+      } else if (token === "had" && words[i+1]) {
+        clauseTime = "past"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+      } else if ((token === "am" || token === "is" || token === "are") && words[i+1]) {
+        clauseTime = "present"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+      } else if ((token === "was" || token === "were") && words[i+1]) {
+        clauseTime = "past"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+      }
+
+      if (isVerbChain) {
+        let nextIdx = i + skipCount;
+        if (nextIdx < words.length && ["myself", "yourself", "himself", "herself", "itself", "ourselves", "themselves"].includes(words[nextIdx])) {
+          clauseReflexive = true; skipCount++;
+        }
+        let baseVerb = findWordByEnglishPhrase(verbToken, "VERB");
+        if (baseVerb) {
+          hasVerb = true;
+          let stem = baseVerb.k.replace(/ár$|ar$/, '');
+          let suffix = "";
+          if (clauseAspect === "simple") {
+            if (clauseTime === "present") suffix = clauseReflexive ? "aráth" : "ár";
+            else if (clauseTime === "past") suffix = clauseReflexive ? "aróth" : "ór";
+            else if (clauseTime === "future") suffix = clauseReflexive ? "aríth" : "ír";
+          } else if (clauseAspect === "continuous") {
+            if (clauseTime === "present") suffix = clauseReflexive ? "eráth" : "erá";
+            else if (clauseTime === "past") suffix = clauseReflexive ? "eróth" : "eró";
+            else if (clauseTime === "future") suffix = clauseReflexive ? "eríth" : "erí";
+          } else if (clauseAspect === "perfect") {
+            if (clauseTime === "present") suffix = clauseReflexive ? "ayáth" : "ayá";
+            else if (clauseTime === "past") suffix = clauseReflexive ? "ayóth" : "ayó";
+            else if (clauseTime === "future") suffix = clauseReflexive ? "ayíth" : "ayí";
+          }
+          outputComponents.push({ type: "verb", word: stem + suffix });
+          i += skipCount;
+          continue;
+        }
+      }
+
+      if (matchedEntry) {
+        let role = hasVerb ? "object" : "subject";
+        if (matchedEntry.t === "PRON") {
+          let finalPron = matchedEntry.k;
+          if (role === "object") {
+            let accForm = CORE_DICT.find(x => x.t === "PRON" && x.e.toLowerCase() === matchedEntry.e.toLowerCase() && x.case === "accusative");
+            if (accForm) finalPron = accForm.k;
+          }
+          outputComponents.push({ type: "pronoun", role: role, word: finalPron });
+        } else if (matchedEntry.t === "NOUN") {
+          let isPlural = words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]);
+          let cls = detectNounClass(matchedEntry.k);
+          let inflected = matchedEntry.k;
+          let targetCase = role === "object" ? "accusative" : "nominative";
+
+          if (cls === "1st") {
+            let r = matchedEntry.k;
+            let endsInS = r.toLowerCase().endsWith('s');
+            let sRoot = endsInS ? r.slice(0, -1) : r;
+            if (targetCase === "accusative") {
+              // Synthesizer updated here to correctly output kaséa for Plural Accusative
+              if (isPlural) inflected = `${r}éa`;
+              else inflected = endsInS ? `${sRoot}sse` : `${r}e`;
+            } else {
+              if (isPlural) inflected = endsInS ? `${sRoot}ssa` : `${r}a`;
+            }
+          } else {
+            let stem = detectVocalicStem(matchedEntry.k);
+            let base = matchedEntry.k.endsWith('s') ? matchedEntry.k.slice(0, -1) : matchedEntry.k;
+            if (targetCase === "accusative") {
+              if (isPlural) inflected = base + stem + "n";
+              else inflected = base;
+            } else {
+              if (isPlural) inflected = base + "a";
+            }
+          }
+          outputComponents.push({ type: "noun", role: role, word: inflected });
+        } else if (matchedEntry.t === "VERB") {
+          hasVerb = true;
+          let stem = matchedEntry.k.replace(/ár$|ar$/, '');
+          let isPast = token.endsWith("ed") || ["ate", "spoke", "did", "fell"].includes(token);
+          let suffix = isPast ? "ór" : "ár";
+          outputComponents.push({ type: "verb", word: stem + suffix });
+        } else {
+          outputComponents.push({ type: "other", word: matchedEntry.k });
+        }
+        i += matchLength;
+        continue;
+      }
+
+      if (token === "the" || token === "a" || token === "an") { i++; continue; }
+      if (token !== "/") outputComponents.push({ type: "unknown", word: `[${token}]` });
+      i++;
+    }
+
+    let finalOrder = [];
+    let subjs = outputComponents.filter(c => c.role === "subject");
+    let objs = outputComponents.filter(c => c.role === "object");
+    let vbs = outputComponents.filter(c => c.type === "verb");
+    let others = outputComponents.filter(c => !c.role && c.type !== "verb");
+
+    if (subjs.length > 0 || objs.length > 0 || vbs.length > 0) {
+      subjs.forEach(s => finalOrder.push(s.word));
+      objs.forEach(o => finalOrder.push(o.word));
+      vbs.forEach(v => finalOrder.push(v.word));
+      others.forEach(oth => finalOrder.push(oth.word));
+    } else {
+      outputComponents.forEach(c => finalOrder.push(c.word));
+    }
+
+    let translationText = finalOrder.join(" ");
+    if (translationText) {
+      translationText = translationText.charAt(0).toUpperCase() + translationText.slice(1) + ".";
+    }
+
+    box.innerHTML = `
+      <p><strong>Synthesized Kestelál Text:</strong> <span style="color:var(--green-light); font-weight:600;">${translationText || 'No translatable tokens parsed.'}</span></p>
+    `;
+  }
+}
+
+function doGloss() {
+  const input = document.getElementById('gloss-input').value.trim();
+  const box = document.getElementById('gloss-result');
+  if (!input) return;
+  box.style.display = "block";
+
+  let tokens = input.split(/\s+/);
+  let html = '<div class="gloss-row">';
+
+  tokens.forEach((tok, i) => {
+    let res = analyzeWordMorphology(tok, tokens, i);
+    if (res) {
+      html += `
+        <div class="gloss-word">
+          <div class="gloss-source">${tok}</div>
+          <div class="gloss-target">${res.gloss}</div>
+          <div class="gloss-details">${res.meta}</div>
+        </div>
+      `;
+    } else {
+      html += `
+        <div class="gloss-word">
+          <div class="gloss-source">${tok}</div>
+          <div class="gloss-target">[Unknown Token]</div>
+          <div class="gloss-details">Type: unmapped\nNo valid morphosyntactic rule matched.</div>
+        </div>
+      `;
+    }
+  });
+
+  html += '</div>';
+  box.innerHTML = html;
+}
+
+function doDeclension() {
+  const w = document.getElementById('decl-word').value.trim();
+  const box = document.getElementById('decl-result');
+  if (!w) return;
+
+  let cls = detectNounClass(w);
+  let r = w.toLowerCase();
+  let endsInS = r.endsWith('s');
+  let sRoot = endsInS ? r.slice(0, -1) : r;
+
+  // Strip the last accented vowel in the stem (used when the suffix carries its own accent)
+  const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+  function stripStemAccent(stem) {
+    // Reverse, replace the first accented vowel found, reverse back
+    return stem.split('').reverse().join('')
+      .replace(/[áéíóú]/, c => ACCENT_MAP[c])
+      .split('').reverse().join('');
+  }
+
+  // Check if the word ends in a consonant (for consonant-doubling rule)
+  const VOWELS = "aeiouáéíóú";
+  function endsInConsonant(s) {
+    return s.length > 0 && !VOWELS.includes(s[s.length - 1]);
+  }
+
+  let nomSing, nomPlur, accSing, accPlur, genSing, genPlur, insSing, insPlur;
+
+  if (cls === "1st") {
+    nomSing = w;
+
+    if (endsInS) {
+      // Words ending in -s: double the s → -ssa / accented variant -sá (strip stem accent)
+      nomPlur = sRoot + "ssa";
+      accSing = `${sRoot}sse / ${stripStemAccent(sRoot)}sé`;
+      accPlur = stripStemAccent(r) + "éa";
+      genSing = r + "i";
+      genPlur = stripStemAccent(r) + "ía";
+      insSing = r + "u";
+      insPlur = stripStemAccent(r) + "úa";
+    } else if (endsInConsonant(r)) {
+      // Words ending in a consonant: double final consonant + vowel / OR strip accent + accented suffix vowel
+      let finalCons = r[r.length - 1];
+      let stripped = stripStemAccent(r);
+      nomPlur = `${r}${finalCons}a / ${stripped}á`;
+      accSing = `${r}${finalCons}e / ${stripped}é`;
+      accPlur = stripped + "éa";
+      genSing = r + "i";
+      genPlur = stripped + "ía";
+      insSing = r + "u";
+      insPlur = stripped + "úa";
+    } else {
+      // Words ending in a vowel: plain suffix append
+      nomPlur = r + "a";
+      accSing = `${r}e / ${r}é`;
+      accPlur = r + "éa";
+      genSing = r + "i";
+      genPlur = r + "ía";
+      insSing = r + "u";
+      insPlur = r + "úa";
+    }
+  } else {
+    let stem = detectVocalicStem(w);
+    let base = endsInS ? r.slice(0, -1) : r;
+    nomSing = w;
+    nomPlur = base + "a / " + base + "sa";
+    accSing = base;
+    accPlur = base + stem + "n";
+    genSing = base + "i";
+    genPlur = base + "ya";
+    insSing = base + "u";
+    insPlur = base + "wa";
+  }
+
+  box.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Case</th>
+          <th>Singular</th>
+          <th>Plural</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="td-kas">Nominative</td>
+          <td>${nomSing}</td>
+          <td>${nomPlur}</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Accusative</td>
+          <td>${accSing}</td>
+          <td>${accPlur}</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Genitive</td>
+          <td>${genSing}</td>
+          <td>${genPlur}</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Instrumental</td>
+          <td>${insSing}</td>
+          <td>${insPlur}</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
+
+function doConjugate() {
+  const v = document.getElementById('verb-input').value.trim();
+  const box = document.getElementById('verb-result');
+  if (!v) return;
+
+  let stem = v.replace(/ár$|ar$/, '');
+
+  box.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Aspect / Mode</th>
+          <th>Past</th>
+          <th>Present</th>
+          <th>Future</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="td-kas">Simple Direct</td>
+          <td>${stem}ór</td>
+          <td>${stem}ár</td>
+          <td>${stem}ír</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Continuous Direct</td>
+          <td>${stem}eró</td>
+          <td>${stem}erá</td>
+          <td>${stem}erí</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Perfect Direct</td>
+          <td>${stem}ayó</td>
+          <td>${stem}ayá</td>
+          <td>${stem}ayí</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Simple Reflexive</td>
+          <td>${stem}aróth</td>
+          <td>${stem}aráth</td>
+          <td>${stem}aríth</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Continuous Reflexive</td>
+          <td>${stem}eróth</td>
+          <td>${stem}eráth</td>
+          <td>${stem}eríth</td>
+        </tr>
+        <tr>
+          <td class="td-kas">Perfect Reflexive</td>
+          <td>${stem}ayóth</td>
+          <td>${stem}ayáth</td>
+          <td>${stem}ayíth</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
+
+function renderDict() {
+  const query = document.getElementById('dict-search').value.toLowerCase().trim();
+  const listEl = document.getElementById('dict-list');
+  if (!listEl) return;
+
+  let filtered = CORE_DICT;
+  if (query) {
+    filtered = CORE_DICT.filter(x => 
+      x.k.toLowerCase().includes(query) || 
+      x.e.toLowerCase().includes(query) || 
+      x.t.toLowerCase().includes(query)
+    );
+  }
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<p style="color:var(--text-muted); font-style:italic; padding: 0.5rem 0;">No index items match search coordinates.</p>';
+    return;
+  }
+
+  listEl.innerHTML = filtered.map(x => `
+    <div class="dict-entry">
+      <div class="de-word">${x.k}</div>
+      <div class="de-type">${x.t}</div>
+      <div style="color:var(--ink)">${x.e}${x.cls ? ` <span style="color:var(--text-dim); font-size:0.85rem; font-style:italic;">(${x.cls} Class)</span>` : ''}</div>
+    </div>
+  `).join('');
+}
+
+// Interactive Multi-Panel Switching System
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    
+    btn.classList.add('active');
+    const panelId = 'tab-' + btn.getAttribute('data-tab');
+    document.getElementById(panelId).classList.add('active');
+  });
+});
+
+// Live Index Input Hooks
+document.getElementById('dict-search').addEventListener('input', renderDict);
+
+// Document Lifecycle Setup Hook
+document.addEventListener('DOMContentLoaded', () => {
+  initializeDataLayer();
+});
+</script>
+</body>
+</html>
