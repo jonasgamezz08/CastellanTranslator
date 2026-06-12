@@ -460,7 +460,6 @@ function inflectEnglishVerb(baseEnglish, time, aspect) {
       ing: v.endsWith('e') ? v.slice(0, -1) + "ing" : v + "ing",
       ppart: v.endsWith('e') ? v + "d" : v + "ed"
     };
-    // Default present 3sg: add -s, or -es for sibilant endings
     if (!forms.pres3sg) {
       forms.pres3sg = (v.endsWith('s') || v.endsWith('sh') || v.endsWith('ch') || v.endsWith('x') || v.endsWith('z'))
         ? v + "es" : v + "s";
@@ -491,6 +490,11 @@ function inflectEnglishVerb(baseEnglish, time, aspect) {
 function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
   let cl = word.toLowerCase().trim().replace(/[,!?\.;:'"]/g, '');
   if (!cl) return null;
+
+  const cleanAccents = (str) => {
+    const map = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+    return str.toLowerCase().replace(/[áéíóú]/g, c => map[c]);
+  };
 
   let exactMatch = CORE_DICT.find(x => x.k.toLowerCase() === cl);
   if (exactMatch) {
@@ -530,7 +534,7 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
       else if (suffix === "ayíth") { mode = "reflexive"; time = "future"; aspect = "perfect"; }
       else if (suffix === "ór" || suffix === "or") { mode = "direct"; time = "past"; aspect = "simple"; }
       else if (suffix === "ír" || suffix === "ir") { mode = "direct"; time = "future"; aspect = "simple"; }
-      else if (suffix === "erá") { mode = "direct"; time = "present"; aspect = "continuous"; }
+      else if (suffix === "erá" || suffix === "er") { mode = "direct"; time = "present"; aspect = "continuous"; }
       else if (suffix === "eró") { mode = "direct"; time = "past"; aspect = "continuous"; }
       else if (suffix === "erí") { mode = "direct"; time = "future"; aspect = "continuous"; }
       else if (suffix === "ayá") { mode = "direct"; time = "present"; aspect = "perfect"; }
@@ -559,11 +563,9 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
       if ((endsInS && cl === sRoot + "ssa") || (!endsInS && cl === r + "a") || cl === r + "á") 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
       
-      // Accusative Singular Fix: accepts both kasse and kasé variants cleanly without overlapping systems
       if ((endsInS && (cl === sRoot + "sse" || cl === sRoot + "sé")) || (!endsInS && (cl === r + "e" || cl === r + "é"))) 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
       
-      // Accusative Plural Fix: aligns correctly to recognize the -éa inflection profile
       if ((endsInS && cl === sRoot + "ssé") || cl === r + "éa") 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
       
@@ -586,8 +588,9 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
   }
 
   for (let x of CORE_DICT.filter(d => d.t === "ADJ")) {
-    let baseStem = x.k.slice(0, -2);
-    if (cl === x.k || (cl.startsWith(baseStem) && (cl.endsWith("íl") || cl.endsWith("ál")))) {
+    let cleanCl = cleanAccents(cl);
+    let cleanK = cleanAccents(x.k);
+    if (cl.toLowerCase() === x.k.toLowerCase() || (cleanCl.startsWith(cleanK) && cleanCl.length > cleanK.length)) {
       let stemChar = x.k.endsWith("íl") ? "i" : "a";
       return { type: "adjective", base: x.k, gloss: x.e, meta: `Ending Stem: ${stemChar}\nCase: variant\nNumber: variant` };
     }
@@ -715,7 +718,13 @@ function doTranslate() {
             else if (clauseTime === "past") suffix = clauseReflexive ? "ayóth" : "ayó";
             else if (clauseTime === "future") suffix = clauseReflexive ? "ayíth" : "ayí";
           }
-          outputComponents.push({ type: "verb", word: stem + suffix });
+          let fullVerbWord = stem + suffix;
+          let vowelGroups = fullVerbWord.match(/[aeiouáéíóú]+/gi);
+          if (vowelGroups && vowelGroups.length === 1) {
+            const map = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+            fullVerbWord = fullVerbWord.replace(/[áéíóú]/g, c => map[c]);
+          }
+          outputComponents.push({ type: "verb", word: fullVerbWord });
           i += skipCount;
           continue;
         }
@@ -750,7 +759,7 @@ function doTranslate() {
             let stem = detectVocalicStem(matchedEntry.k);
             let base = matchedEntry.k.endsWith('s') ? matchedEntry.k.slice(0, -1) : matchedEntry.k;
             if (targetCase === "accusative") {
-              if (isPlural) inflected = base + "n";
+              if (isPlural) inflected = base + stem + "n";
               else inflected = base;
             } else {
               if (isPlural) inflected = base + "a";
@@ -762,7 +771,13 @@ function doTranslate() {
           let stem = matchedEntry.k.replace(/ár$|ar$/, '');
           let isPast = token.endsWith("ed") || ["ate", "spoke", "did", "fell"].includes(token);
           let suffix = isPast ? "ór" : "ár";
-          outputComponents.push({ type: "verb", word: stem + suffix });
+          let fullVerbWord = stem + suffix;
+          let vowelGroups = fullVerbWord.match(/[aeiouáéíóú]+/gi);
+          if (vowelGroups && vowelGroups.length === 1) {
+            const map = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+            fullVerbWord = fullVerbWord.replace(/[áéíóú]/g, c => map[c]);
+          }
+          outputComponents.push({ type: "verb", word: fullVerbWord });
         } else {
           outputComponents.push({ type: "other", word: matchedEntry.k });
         }
@@ -845,16 +860,13 @@ function doDeclension() {
   let endsInS = r.endsWith('s');
   let sRoot = endsInS ? r.slice(0, -1) : r;
 
-  // Strip the last accented vowel in the stem (used when the suffix carries its own accent)
   const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
   function stripStemAccent(stem) {
-    // Reverse, replace the first accented vowel found, reverse back
     return stem.split('').reverse().join('')
       .replace(/[áéíóú]/, c => ACCENT_MAP[c])
       .split('').reverse().join('');
   }
 
-  // Check if the word ends in a consonant (for consonant-doubling rule)
   const VOWELS = "aeiouáéíóú";
   function endsInConsonant(s) {
     return s.length > 0 && !VOWELS.includes(s[s.length - 1]);
@@ -866,7 +878,6 @@ function doDeclension() {
     nomSing = w;
 
     if (endsInS) {
-      // Words ending in -s: double the s → -ssa / accented variant -sá (strip stem accent)
       nomPlur = sRoot + "ssa";
       accSing = `${sRoot}sse / ${stripStemAccent(sRoot)}sé`;
       accPlur = stripStemAccent(r) + "éa";
@@ -875,7 +886,6 @@ function doDeclension() {
       insSing = r + "u";
       insPlur = stripStemAccent(r) + "úa";
     } else if (endsInConsonant(r)) {
-      // Words ending in a consonant: double final consonant + vowel / OR strip accent + accented suffix vowel
       let finalCons = r[r.length - 1];
       let stripped = stripStemAccent(r);
       nomPlur = `${r}${finalCons}a / ${stripped}á`;
@@ -886,7 +896,6 @@ function doDeclension() {
       insSing = r + "u";
       insPlur = stripped + "úa";
     } else {
-      // Words ending in a vowel: plain suffix append
       nomPlur = r + "a";
       accSing = `${r}e / ${r}é`;
       accPlur = r + "éa";
@@ -901,7 +910,7 @@ function doDeclension() {
     nomSing = w;
     nomPlur = base + "a / " + base + "sa";
     accSing = base;
-    accPlur = base + "n";
+    accPlur = base + stem + "n";
     genSing = base + "i";
     genPlur = base + "ya";
     insSing = base + "u";
@@ -950,6 +959,39 @@ function doConjugate() {
 
   let stem = v.replace(/ár$|ar$/, '');
 
+  function fixMonosyllable(w) {
+    let vowelGroups = w.match(/[aeiouáéíóú]+/gi);
+    if (vowelGroups && vowelGroups.length === 1) {
+      const map = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+      return w.replace(/[áéíóú]/g, c => map[c]);
+    }
+    return w;
+  }
+
+  let sdPast = fixMonosyllable(stem + "ór");
+  let sdPres = fixMonosyllable(stem + "ár");
+  let sdFut  = fixMonosyllable(stem + "ír");
+  
+  let cdPres = fixMonosyllable(stem + "erá") + " / " + fixMonosyllable(stem + "er");
+  let cdPast = fixMonosyllable(stem + "eró");
+  let cdFut  = fixMonosyllable(stem + "erí");
+  
+  let pdPast = fixMonosyllable(stem + "ayó");
+  let pdPres = fixMonosyllable(stem + "ayá");
+  let pdFut  = fixMonosyllable(stem + "ayí");
+  
+  let srPast = fixMonosyllable(stem + "aróth");
+  let srPres = fixMonosyllable(stem + "aráth");
+  let srFut  = fixMonosyllable(stem + "aríth");
+  
+  let crPast = fixMonosyllable(stem + "eróth");
+  let crPres = fixMonosyllable(stem + "eráth");
+  let crFut  = fixMonosyllable(stem + "eríth");
+  
+  let prPast = fixMonosyllable(stem + "ayóth");
+  let prPres = fixMonosyllable(stem + "ayáth");
+  let prFut  = fixMonosyllable(stem + "ayíth");
+
   box.innerHTML = `
     <table>
       <thead>
@@ -963,39 +1005,39 @@ function doConjugate() {
       <tbody>
         <tr>
           <td class="td-kas">Simple Direct</td>
-          <td>${stem}ór</td>
-          <td>${stem}ár</td>
-          <td>${stem}ír</td>
+          <td>${sdPast}</td>
+          <td>${sdPres}</td>
+          <td>${sdFut}</td>
         </tr>
         <tr>
           <td class="td-kas">Continuous Direct</td>
-          <td>${stem}eró</td>
-          <td>${stem}erá</td>
-          <td>${stem}erí</td>
+          <td>${cdPast}</td>
+          <td>${cdPres}</td>
+          <td>${cdFut}</td>
         </tr>
         <tr>
           <td class="td-kas">Perfect Direct</td>
-          <td>${stem}ayó</td>
-          <td>${stem}ayá</td>
-          <td>${stem}ayí</td>
+          <td>${pdPast}</td>
+          <td>${pdPres}</td>
+          <td>${pdFut}</td>
         </tr>
         <tr>
           <td class="td-kas">Simple Reflexive</td>
-          <td>${stem}aróth</td>
-          <td>${stem}aráth</td>
-          <td>${stem}aríth</td>
+          <td>${srPast}</td>
+          <td>${srPres}</td>
+          <td>${srFut}</td>
         </tr>
         <tr>
           <td class="td-kas">Continuous Reflexive</td>
-          <td>${stem}eróth</td>
-          <td>${stem}eráth</td>
-          <td>${stem}eríth</td>
+          <td>${crPast}</td>
+          <td>${crPres}</td>
+          <td>${crFut}</td>
         </tr>
         <tr>
           <td class="td-kas">Perfect Reflexive</td>
-          <td>${stem}ayóth</td>
-          <td>${stem}ayáth</td>
-          <td>${stem}ayíth</td>
+          <td>${prPast}</td>
+          <td>${prPres}</td>
+          <td>${prFut}</td>
         </tr>
       </tbody>
     </table>
@@ -1030,7 +1072,6 @@ function renderDict() {
   `).join('');
 }
 
-// Interactive Multi-Panel Switching System
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -1042,10 +1083,8 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// Live Index Input Hooks
 document.getElementById('dict-search').addEventListener('input', renderDict);
 
-// Document Lifecycle Setup Hook
 document.addEventListener('DOMContentLoaded', () => {
   initializeDataLayer();
 });
