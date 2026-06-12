@@ -328,7 +328,7 @@ td {
   <div class="card">
     <div class="card-title">Verb Systems</div>
     <div class="grid-2">
-      <input type="text" id="verb-input" placeholder="Infinitive (e.g. brenár, sutár, subadár)">
+      <input type="text" id="verb-input" placeholder="Infinitive (e.g. brenár, sutár, subadár, tar)">
       <button class="btn" onclick="doConjugate()">Generate Verb Matrix</button>
     </div>
     <div id="verb-result"></div>
@@ -388,7 +388,8 @@ const EMERGENCY_FALLBACK_DICT = [
   {k:"subadár",t:"VERB",e:"speak, talk, converse"},
   {k:"narár",t:"VERB",e:"do, make, perform"},
   {k:"suvár",t:"VERB",e:"help, aid, assist"},
-  {k:"audal",t:"VERB",e:"fall, descend, collapse, succumb"}
+  {k:"audal",t:"VERB",e:"fall, descend, collapse, succumb"},
+  {k:"tar",t:"VERB",e:"be, exist"}
 ];
 
 async function initializeDataLayer() {
@@ -406,19 +407,49 @@ async function initializeDataLayer() {
 function findWordByEnglishPhrase(phrase, typeFilter = null) {
   let q = phrase.toLowerCase().trim();
   if (!q) return null;
+
+  const lemmatize = (word) => {
+    if (word === "eating" || word === "ate" || word === "eaten") return "eat";
+    if (word === "speaking" || word === "spoke" || word === "spoken") return "speak";
+    if (word === "doing" || word === "did" || word === "done") return "do";
+    if (word === "falling" || word === "fell" || word === "fallen") return "fall";
+    if (word === "saving" || word === "saved") return "save";
+    if (word === "guarding" || word === "guarded") return "guard";
+    if (word === "protecting" || word === "protected") return "protect";
+    if (word === "talking" || word === "talked") return "talk";
+    if (word === "conversing" || word === "conversed") return "converse";
+    if (word === "making" || word === "made") return "make";
+    if (word === "performing" || word === "performed") return "perform";
+    if (word === "helping" || word === "helped") return "help";
+    if (word === "aiding" || word === "aided") return "aid";
+    if (word === "assisting" || word === "assisted") return "assist";
+    if (word === "consuming" || word === "consumed") return "consume";
+    if (word === "dining" || word === "dined") return "dine";
+    if (word === "being" || word === "was" || word === "were" || word === "been" || word === "is" || word === "am" || word === "are") return "be";
+    
+    if (word.endsWith("ing")) return [word.slice(0, -3), word.slice(0, -3) + "e"];
+    if (word.endsWith("ed")) return [word.slice(0, -2), word.slice(0, -2) + "e"];
+    if (word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
+    return word;
+  };
+
+  let lemmas = [q];
+  let lemmatized = lemmatize(q);
+  if (Array.isArray(lemmatized)) lemmas.push(...lemmatized);
+  else lemmas.push(lemmatized);
+
   return CORE_DICT.find(x => {
     if (typeFilter && x.t !== typeFilter) return false;
     let def = x.e.toLowerCase().trim();
-    if (def === q) return true;
-    
     let options = def.split(/[,;\/]+|\bor\b/).map(o => o.trim());
-    if (options.some(opt => opt === q || q === opt)) return true;
-    
-    let cleanQ = q.startsWith("to ") ? q.substring(3).trim() : q;
     let cleanOptions = options.map(opt => opt.startsWith("to ") ? opt.substring(3).trim() : opt);
-    if (cleanOptions.some(opt => opt === cleanQ || cleanQ === opt)) return true;
     
-    return false;
+    return lemmas.some(lemma => 
+      options.includes(lemma) || 
+      cleanOptions.includes(lemma) ||
+      lemma === def ||
+      (lemma.startsWith("to ") && cleanOptions.includes(lemma.substring(3).trim()))
+    );
   });
 }
 
@@ -460,7 +491,6 @@ function inflectEnglishVerb(baseEnglish, time, aspect) {
       ing: v.endsWith('e') ? v.slice(0, -1) + "ing" : v + "ing",
       ppart: v.endsWith('e') ? v + "d" : v + "ed"
     };
-    // Default present 3sg: add -s, or -es for sibilant endings
     if (!forms.pres3sg) {
       forms.pres3sg = (v.endsWith('s') || v.endsWith('sh') || v.endsWith('ch') || v.endsWith('x') || v.endsWith('z'))
         ? v + "es" : v + "s";
@@ -559,11 +589,9 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
       if ((endsInS && cl === sRoot + "ssa") || (!endsInS && cl === r + "a") || cl === r + "á") 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "nominative", num: "plural", meta: "Class: 1st\nCase: nominative\nNumber: plural" };
       
-      // Accusative Singular Fix: accepts both kasse and kasé variants cleanly without overlapping systems
       if ((endsInS && (cl === sRoot + "sse" || cl === sRoot + "sé")) || (!endsInS && (cl === r + "e" || cl === r + "é"))) 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "singular", meta: "Class: 1st\nCase: accusative\nNumber: singular" };
       
-      // Accusative Plural Fix: aligns correctly to recognize the -éa inflection profile
       if ((endsInS && cl === sRoot + "ssé") || cl === r + "éa") 
         return { type: "noun", class: "1st", base: x.k, gloss: x.e, case: "accusative", num: "plural", meta: "Class: 1st\nCase: accusative\nNumber: plural" };
       
@@ -656,40 +684,74 @@ function doTranslate() {
     let clauseAspect = "simple";
     let clauseReflexive = false;
 
+    const isDictionaryVerb = (w) => {
+      let found = findWordByEnglishPhrase(w, "VERB");
+      return !!found && found.k !== "tar";
+    };
+
     while (i < words.length) {
       let token = words[i];
 
-      let matchedEntry = null;
-      let matchLength = 0;
-      for (let len = Math.min(5, words.length - i); len >= 1; len--) {
-        let subPhrase = words.slice(i, i + len).join(" ");
-        let normalizedPhrase = subPhrase.replace(/\s+\/\s+/g, "/");
-        let found = findWordByEnglishPhrase(subPhrase) || findWordByEnglishPhrase(normalizedPhrase);
-        if (found) {
-          matchedEntry = found;
-          matchLength = len;
-          break;
-        }
-      }
-
       let isVerbChain = false;
+      let isCopula = false;
       let verbToken = "";
       let skipCount = 0;
+      let copulaForm = "";
 
-      if (token === "will" && words[i+1] === "have" && words[i+2]) {
-        clauseTime = "future"; clauseAspect = "perfect"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+      if (token === "will" && words[i+1] === "have" && words[i+2] === "been") {
+        if (words[i+3] && (words[i+3].endsWith("ing") || isDictionaryVerb(words[i+3]))) {
+          clauseTime = "future"; clauseAspect = "perfect"; verbToken = words[i+3]; skipCount = 4; isVerbChain = true;
+        } else {
+          isCopula = true; copulaForm = "ayí"; skipCount = 3;
+        }
+      } else if (token === "will" && words[i+1] === "have" && words[i+2]) {
+        if (isDictionaryVerb(words[i+2]) || words[i+2].endsWith("ed") || ["eaten","spoken","done","fallen","saved","protected","guarded"].includes(words[i+2])) {
+          clauseTime = "future"; clauseAspect = "perfect"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+        }
       } else if (token === "will" && words[i+1] === "be" && words[i+2]) {
-        clauseTime = "future"; clauseAspect = "continuous"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+        if (words[i+2].endsWith("ing") || isDictionaryVerb(words[i+2])) {
+          clauseTime = "future"; clauseAspect = "continuous"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+        } else {
+          isCopula = true; copulaForm = "tír"; skipCount = 2;
+        }
       } else if (token === "will" && words[i+1]) {
-        clauseTime = "future"; clauseAspect = "simple"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+        if (isDictionaryVerb(words[i+1])) {
+          clauseTime = "future"; clauseAspect = "simple"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+        }
+      } else if ((token === "have" || token === "has") && words[i+1] === "been") {
+        if (words[i+2] && (words[i+2].endsWith("ing") || isDictionaryVerb(words[i+2]))) {
+          clauseTime = "present"; clauseAspect = "perfect"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+        } else {
+          isCopula = true; copulaForm = "ayá"; skipCount = 2;
+        }
       } else if ((token === "have" || token === "has") && words[i+1]) {
-        clauseTime = "present"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+        if (isDictionaryVerb(words[i+1]) || words[i+1].endsWith("ed") || ["eaten","spoken","done","fallen","saved","protected","guarded"].includes(words[i+1])) {
+          clauseTime = "present"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+        }
+      } else if (token === "had" && words[i+1] === "been") {
+        if (words[i+2] && (words[i+2].endsWith("ing") || isDictionaryVerb(words[i+2]))) {
+          clauseTime = "past"; clauseAspect = "perfect"; verbToken = words[i+2]; skipCount = 3; isVerbChain = true;
+        } else {
+          isCopula = true; copulaForm = "ayó"; skipCount = 2;
+        }
       } else if (token === "had" && words[i+1]) {
-        clauseTime = "past"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
-      } else if ((token === "am" || token === "is" || token === "are") && words[i+1]) {
-        clauseTime = "present"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
-      } else if ((token === "was" || token === "were") && words[i+1]) {
-        clauseTime = "past"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+        if (isDictionaryVerb(words[i+1]) || words[i+1].endsWith("ed") || ["eaten","spoken","done","fallen","saved","protected","guarded"].includes(words[i+1])) {
+          clauseTime = "past"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+        }
+      } else if (["am", "is", "are"].includes(token)) {
+        if (words[i+1] && (words[i+1].endsWith("ing") || ["eating","speaking","doing","falling","saving","guarding","protecting","talking","conversing"].includes(words[i+1]) || isDictionaryVerb(words[i+1]))) {
+          clauseTime = "present"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+        } else {
+          isCopula = true; copulaForm = "tár"; skipCount = 1;
+        }
+      } else if (["was", "were"].includes(token)) {
+        if (words[i+1] && (words[i+1].endsWith("ing") || ["eating","speaking","doing","falling","saving","guarding","protecting","talking","conversing"].includes(words[i+1]) || isDictionaryVerb(words[i+1]))) {
+          clauseTime = "past"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+        } else {
+          isCopula = true; copulaForm = "tór"; skipCount = 1;
+        }
+      } else if (token === "be") {
+        isCopula = true; copulaForm = "tar"; skipCount = 1;
       }
 
       if (isVerbChain) {
@@ -721,6 +783,26 @@ function doTranslate() {
         }
       }
 
+      if (isCopula) {
+        hasVerb = true;
+        outputComponents.push({ type: "verb", word: copulaForm });
+        i += skipCount;
+        continue;
+      }
+
+      let matchedEntry = null;
+      let matchLength = 0;
+      for (let len = Math.min(5, words.length - i); len >= 1; len--) {
+        let subPhrase = words.slice(i, i + len).join(" ");
+        let normalizedPhrase = subPhrase.replace(/\s+\/\s+/g, "/");
+        let found = findWordByEnglishPhrase(subPhrase) || findWordByEnglishPhrase(normalizedPhrase);
+        if (found) {
+          matchedEntry = found;
+          matchLength = len;
+          break;
+        }
+      }
+
       if (matchedEntry) {
         let role = hasVerb ? "object" : "subject";
         if (matchedEntry.t === "PRON") {
@@ -741,7 +823,6 @@ function doTranslate() {
             let endsInS = r.toLowerCase().endsWith('s');
             let sRoot = endsInS ? r.slice(0, -1) : r;
             if (targetCase === "accusative") {
-              // Synthesizer updated here to correctly output kaséa for Plural Accusative
               if (isPlural) inflected = `${r}éa`;
               else inflected = endsInS ? `${sRoot}sse` : `${r}e`;
             } else {
@@ -846,16 +927,13 @@ function doDeclension() {
   let endsInS = r.endsWith('s');
   let sRoot = endsInS ? r.slice(0, -1) : r;
 
-  // Strip the last accented vowel in the stem (used when the suffix carries its own accent)
   const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
   function stripStemAccent(stem) {
-    // Reverse, replace the first accented vowel found, reverse back
     return stem.split('').reverse().join('')
       .replace(/[áéíóú]/, c => ACCENT_MAP[c])
       .split('').reverse().join('');
   }
 
-  // Check if the word ends in a consonant (for consonant-doubling rule)
   const VOWELS = "aeiouáéíóú";
   function endsInConsonant(s) {
     return s.length > 0 && !VOWELS.includes(s[s.length - 1]);
@@ -867,7 +945,6 @@ function doDeclension() {
     nomSing = w;
 
     if (endsInS) {
-      // Words ending in -s: double the s → -ssa / accented variant -sá (strip stem accent)
       nomPlur = sRoot + "ssa";
       accSing = `${sRoot}sse / ${stripStemAccent(sRoot)}sé`;
       accPlur = stripStemAccent(r) + "éa";
@@ -876,7 +953,6 @@ function doDeclension() {
       insSing = r + "u";
       insPlur = stripStemAccent(r) + "úa";
     } else if (endsInConsonant(r)) {
-      // Words ending in a consonant: double final consonant + vowel / OR strip accent + accented suffix vowel
       let finalCons = r[r.length - 1];
       let stripped = stripStemAccent(r);
       nomPlur = `${r}${finalCons}a / ${stripped}á`;
@@ -887,7 +963,6 @@ function doDeclension() {
       insSing = r + "u";
       insPlur = stripped + "úa";
     } else {
-      // Words ending in a vowel: plain suffix append
       nomPlur = r + "a";
       accSing = `${r}e / ${r}é`;
       accPlur = r + "éa";
@@ -1031,7 +1106,6 @@ function renderDict() {
   `).join('');
 }
 
-// Interactive Multi-Panel Switching System
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -1043,10 +1117,8 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// Live Index Input Hooks
 document.getElementById('dict-search').addEventListener('input', renderDict);
 
-// Document Lifecycle Setup Hook
 document.addEventListener('DOMContentLoaded', () => {
   initializeDataLayer();
 });
