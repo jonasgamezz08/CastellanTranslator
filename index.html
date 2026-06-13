@@ -503,7 +503,9 @@ function inflectEnglishVerb(baseEnglish, time, aspect) {
     return forms;
   };
 
-  const parts = cleaned.split('/');
+  // Strip already-conjugated copula forms — only keep base infinitives
+  const SKIP_PARTS = new Set(["is", "are", "am", "was", "were"]);
+  const parts = cleaned.split('/').map(p => p.trim()).filter(p => !SKIP_PARTS.has(p));
   
   if (time === "future") {
     if (aspect === "simple") return "will " + parts.join('/');
@@ -755,7 +757,76 @@ function doTranslate() {
     let fluidTranslation = "";
     if (vbs.length > 0) {
       let verbNode = vbs[0];
-      let inflectedVerb = inflectEnglishVerb(verbNode.gloss, verbNode.time || "present", verbNode.aspect || "simple");
+
+      // Determine subject person/number for verb agreement
+      // Default: 3rd singular ("it") → use standard inflectEnglishVerb
+      let subjPerson = "3sg";
+      if (subjs.length > 0) {
+        let s = subjs[0];
+        if (s.type === "pronoun") {
+          let g = s.gloss.toLowerCase();
+          if (g.includes("i") && !g.includes("it") || g === "i") subjPerson = "1sg";
+          else if (g.includes("we") || g.includes("us") || s.num === "plural" && g.includes("we")) subjPerson = "1pl";
+          else if (g.includes("you")) subjPerson = "2";
+          else if (g.includes("they") || g.includes("them") || s.num === "plural") subjPerson = "3pl";
+          else subjPerson = "3sg";
+        } else {
+          // Noun subject — plural nouns take 3pl
+          subjPerson = (s.num === "plural") ? "3pl" : "3sg";
+        }
+      } else {
+        subjPerson = "3sg"; // "It"
+      }
+
+      // Inflect verb with agreement
+      function inflectAgreed(baseEnglish, time, aspect, person) {
+        const SKIP_PARTS = new Set(["is","are","am","was","were"]);
+        let cleaned = baseEnglish.replace(/\bto\s+/gi,'').replace(/,\s*/g,'/');
+        const getForms = (v) => {
+          v = v.trim();
+          const irr = {
+            "be":    { "1sg": "am",  "1pl": "are", "2": "are", "3sg": "is",  "3pl": "are",
+                       past: "was/were", pastAgr: {"1sg":"was","1pl":"were","2":"were","3sg":"was","3pl":"were"},
+                       ing: "being", ppart: "been" },
+            "exist": { "1sg": "exist","1pl": "exist","2": "exist","3sg": "exists","3pl": "exist",
+                       past: "existed", ing: "existing", ppart: "existed" },
+          };
+          if (irr[v]) {
+            let f = irr[v];
+            return {
+              pres:  f[person] || f["3sg"],
+              past:  time === "past" && f.pastAgr ? (f.pastAgr[person] || f.past) : f.past,
+              ing:   f.ing,
+              ppart: f.ppart
+            };
+          }
+          // Regular verb
+          let pres3sg = (v.endsWith('s')||v.endsWith('sh')||v.endsWith('ch')||v.endsWith('x')||v.endsWith('z')) ? v+"es" : v+"s";
+          let pres = (person === "3sg") ? pres3sg : v;
+          let past = v.endsWith('e') ? v+"d" : v+"ed";
+          let ing  = v.endsWith('e') ? v.slice(0,-1)+"ing" : v+"ing";
+          return { pres, past, ing, ppart: past };
+        };
+        let parts = cleaned.split('/').map(p=>p.trim()).filter(p=>!SKIP_PARTS.has(p));
+        if (parts.length === 0) parts = ["be"];
+        if (time === "future") {
+          if (aspect === "simple")     return "will " + parts.join('/');
+          if (aspect === "continuous") return "will be " + parts.map(p=>getForms(p).ing).join('/');
+          if (aspect === "perfect")    return "will have " + parts.map(p=>getForms(p).ppart).join('/');
+        }
+        if (time === "past") {
+          if (aspect === "simple")     return parts.map(p=>getForms(p).past).join('/');
+          if (aspect === "continuous") return (person==="1sg"||person==="3sg" ? "was" : "were") + " " + parts.map(p=>getForms(p).ing).join('/');
+          if (aspect === "perfect")    return "had " + parts.map(p=>getForms(p).ppart).join('/');
+        }
+        // present
+        if (aspect === "simple")     return parts.map(p=>getForms(p).pres).join('/');
+        if (aspect === "continuous") return (person==="3sg"?"is":person==="1sg"?"am":"are") + " " + parts.map(p=>getForms(p).ing).join('/');
+        if (aspect === "perfect")    return (person==="3sg"?"has":"have") + " " + parts.map(p=>getForms(p).ppart).join('/');
+        return cleaned;
+      }
+
+      let inflectedVerb = inflectAgreed(verbNode.gloss, verbNode.time || "present", verbNode.aspect || "simple", subjPerson);
 
       let subjectPhrases = subjs.map(s => {
         let text = s.gloss.replace(/,\s*/g, ' / ');
@@ -787,8 +858,19 @@ function doTranslate() {
     }
 
     box.innerHTML = `
-      <p><strong>Structural Word Gloss:</strong> <span style="color:var(--text-dim); font-style:italic;">${tokens.map((tok, i) => `<span style="display:inline-block;text-align:center;margin-right:0.5rem">${tok}${kesScriptSm(tok)}</span>`).join('')}</span></p>
-      <p style="margin-top:0.5rem;"><strong>Fluid Synthesized Translation:</strong> <span style="color:var(--green-light); font-weight:600;">${fluidTranslation}</span></p>
+      <p style="margin-bottom:0.5rem"><strong>Structural Word Gloss:</strong></p>
+      <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
+        ${tokens.map((tok, idx) => {
+          let res = analyzedTokens[idx];
+          let gloss = res ? res.gloss.replace(/,\s*/g, ' / ') : tok;
+          return `<div style="display:flex;flex-direction:column;align-items:center;text-align:center;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);padding:0.5rem 0.75rem;min-width:60px;">
+            <span class="kes-script-sm" style="display:block;">${tok}</span>
+            <span style="font-family:'Cinzel',serif;font-size:0.9rem;color:var(--green-light);margin-top:0.15rem;">${tok}</span>
+            <span style="font-size:0.8rem;color:var(--text-dim);font-style:italic;margin-top:0.2rem;">${gloss}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      <p><strong>Fluid Synthesized Translation:</strong> <span style="color:var(--green-light); font-weight:600;">${fluidTranslation}</span></p>
     `;
   } else {
     let words = input.toLowerCase().replace(/[,!?\.;:'"]/g, '').split(/\s+/);
@@ -818,23 +900,48 @@ function doTranslate() {
         }
       }
 
-      // If no match, try stripping English plural suffixes from the last word
+      // If no match, try stripping English plural/conjugated suffixes
       if (!matchedEntry && token.length > 2) {
         let singularCandidates = [];
-        if (token.endsWith("ies"))       singularCandidates.push(token.slice(0, -3) + "y"); // cities→city
+        if (token.endsWith("ies"))       singularCandidates.push(token.slice(0, -3) + "y"); // cities→city / tries→try
         else if (token.endsWith("ves"))  singularCandidates.push(token.slice(0, -3) + "f"); // leaves→leaf
-        else if (token.endsWith("es"))   singularCandidates.push(token.slice(0, -2));        // houses→house
-        if (token.endsWith("s"))         singularCandidates.push(token.slice(0, -1));        // barons→baron
+        else if (token.endsWith("es"))   singularCandidates.push(token.slice(0, -2));        // houses→house / goes→go
+        if (token.endsWith("s"))         singularCandidates.push(token.slice(0, -1));        // barons→baron / runs→run / lives→live
+
+        // Also try verb past/participle stripping
+        let verbCandidates = [];
+        if (token.endsWith("ied"))       verbCandidates.push(token.slice(0, -3) + "y");     // tried→try
+        else if (token.endsWith("ed"))   verbCandidates.push(token.slice(0, -2));            // walked→walk
+        if (token.endsWith("ed") && token.length > 4) verbCandidates.push(token.slice(0, -1)); // lived→live
+        if (token.endsWith("ing")) {
+          verbCandidates.push(token.slice(0, -3));                                            // running→run
+          verbCandidates.push(token.slice(0, -3) + "e");                                     // living→live
+        }
 
         for (let singular of singularCandidates) {
-          let found = findWordByEnglishPhrase(singular) || findWordByEnglishPhrase(
-            words.slice(i, i + 1).map((w, j) => j === 0 ? singular : w).join(" ")
-          );
+          let found = findWordByEnglishPhrase(singular);
           if (found && (found.t === "NOUN" || found.t === "NAME")) {
             matchedEntry = found;
             matchLength = 1;
             isEnglishPlural = true;
             break;
+          }
+          // Also check as verb (e.g. lives→live)
+          if (found && found.t === "VERB") {
+            matchedEntry = found;
+            matchLength = 1;
+            break;
+          }
+        }
+
+        if (!matchedEntry) {
+          for (let vf of verbCandidates) {
+            let found = findWordByEnglishPhrase(vf, "VERB");
+            if (found) {
+              matchedEntry = found;
+              matchLength = 1;
+              break;
+            }
           }
         }
       }
@@ -956,7 +1063,8 @@ function doTranslate() {
         } else if (matchedEntry.t === "VERB") {
           hasVerb = true;
           let stem = matchedEntry.k.replace(/ár$|ar$/, '');
-          let isPast = token.endsWith("ed") || ["ate", "spoke", "did", "fell"].includes(token);
+          let isPast = token.endsWith("ed") || token.endsWith("ied") ||
+                       ["ate", "spoke", "did", "fell", "was", "were"].includes(token);
           let suffix = isPast ? "ór" : "ár";
           outputComponents.push({ type: "verb", word: stem + suffix });
         } else if (matchedEntry.t === "ADJ") {
@@ -1045,7 +1153,7 @@ function doTranslate() {
         let prep = outputComponents[idx];
         let next = outputComponents[idx + 1];
         if (next && (next.type === "noun" || next.type === "name" || next.type === "pronoun") && next.role === "object") {
-          prepGroups.push([next.word, prep.word]); // noun first, then preposition
+          prepGroups.push([prep.word, next.word]); // preposition first, then noun (Kestelál order)
           outputComponents[idx + 1]._inPrepGroup = true;
         } else {
           prepGroups.push([prep.word]);
