@@ -6,6 +6,26 @@
 <title>Kestelál — Castellan Language Workbench</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+@font-face {
+  font-family: 'VelSuradas';
+  src: url('data:font/truetype;base64,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') format('truetype');
+}
+.kes-script {
+  font-family: 'VelSuradas', serif;
+  font-size: 1.4em;
+  color: var(--green-pale);
+  display: block;
+  margin-top: 0.2rem;
+  letter-spacing: 0.05em;
+}
+.kes-script-sm {
+  font-family: 'VelSuradas', serif;
+  font-size: 1.1em;
+  color: var(--green-pale);
+  display: block;
+  margin-top: 0.15rem;
+  letter-spacing: 0.04em;
+}
 :root {
   --bg: #0a0f07;
   --bg2: #111a0a;
@@ -226,9 +246,9 @@ td {
   border-bottom: 1px solid var(--border);
   padding: 0.7rem 0;
   display: grid;
-  grid-template-columns: 240px 80px 1fr;
+  grid-template-columns: 200px 80px 1fr;
   gap: 0.5rem 1rem;
-  align-items: baseline;
+  align-items: start;
 }
 .de-word { font-family: 'Cinzel', serif; color: var(--green-glow); }
 .de-type {
@@ -396,6 +416,15 @@ const EMERGENCY_FALLBACK_DICT = [
   {k:"suvár",t:"VERB",e:"help, aid, assist"},
   {k:"audal",t:"VERB",e:"fall, descend, collapse, succumb"}
 ];
+
+// Render a Kestelál word/phrase with its script form below
+function kesScript(text) {
+  return `<span class="kes-script">${text}</span>`;
+}
+function kesScriptSm(text) {
+  return `<span class="kes-script-sm">${text}</span>`;
+}
+
 
 async function initializeDataLayer() {
   try {
@@ -758,7 +787,7 @@ function doTranslate() {
     }
 
     box.innerHTML = `
-      <p><strong>Structural Word Gloss:</strong> <span style="color:var(--text-dim); font-style:italic;">${literalGlosser.join(" ")}</span></p>
+      <p><strong>Structural Word Gloss:</strong> <span style="color:var(--text-dim); font-style:italic;">${tokens.map((tok, i) => `<span style="display:inline-block;text-align:center;margin-right:0.5rem">${tok}${kesScriptSm(tok)}</span>`).join('')}</span></p>
       <p style="margin-top:0.5rem;"><strong>Fluid Synthesized Translation:</strong> <span style="color:var(--green-light); font-weight:600;">${fluidTranslation}</span></p>
     `;
   } else {
@@ -1041,7 +1070,7 @@ function doTranslate() {
     }
 
     box.innerHTML = `
-      <p><strong>Synthesized Kestelál Text:</strong> <span style="color:var(--green-light); font-weight:600;">${translationText || 'No translatable tokens parsed.'}</span></p>
+      <p><strong>Synthesized Kestelál Text:</strong> <span style="color:var(--green-light); font-weight:600;">${translationText || 'No translatable tokens parsed.'}</span>${translationText ? kesScript(translationText) : ''}</p>
     `;
   }
 }
@@ -1060,7 +1089,7 @@ function doGloss() {
     if (res) {
       html += `
         <div class="gloss-word">
-          <div class="gloss-source">${tok}</div>
+          <div class="gloss-source">${tok}${kesScriptSm(tok)}</div>
           <div class="gloss-target">${res.gloss}</div>
           <div class="gloss-details">${res.meta}</div>
         </div>
@@ -1068,7 +1097,7 @@ function doGloss() {
     } else {
       html += `
         <div class="gloss-word">
-          <div class="gloss-source">${tok}</div>
+          <div class="gloss-source">${tok}${kesScriptSm(tok)}</div>
           <div class="gloss-target">[Unknown Token]</div>
           <div class="gloss-details">Type: unmapped\nNo valid morphosyntactic rule matched.</div>
         </div>
@@ -1169,23 +1198,23 @@ function doDeclension() {
       <tbody>
         <tr>
           <td class="td-kas">Nominative</td>
-          <td>${nomSing}</td>
-          <td>${nomPlur}</td>
+          <td>${nomSing}${kesScriptSm(nomSing)}</td>
+          <td>${nomPlur}${kesScriptSm(nomPlur)}</td>
         </tr>
         <tr>
           <td class="td-kas">Accusative</td>
-          <td>${accSing}</td>
-          <td>${accPlur}</td>
+          <td>${accSing}${kesScriptSm(accSing)}</td>
+          <td>${accPlur}${kesScriptSm(accPlur)}</td>
         </tr>
         <tr>
           <td class="td-kas">Genitive</td>
-          <td>${genSing}</td>
-          <td>${genPlur}</td>
+          <td>${genSing}${kesScriptSm(genSing)}</td>
+          <td>${genPlur}${kesScriptSm(genPlur)}</td>
         </tr>
         <tr>
           <td class="td-kas">Instrumental</td>
-          <td>${insSing}</td>
-          <td>${insPlur}</td>
+          <td>${insSing}${kesScriptSm(insSing)}</td>
+          <td>${insPlur}${kesScriptSm(insPlur)}</td>
         </tr>
       </tbody>
     </table>
@@ -1212,39 +1241,39 @@ function doConjugate() {
       <tbody>
         <tr>
           <td class="td-kas">Simple Direct</td>
-          <td>${stem}ór</td>
-          <td>${stem}ár</td>
-          <td>${stem}ír</td>
+          <td>${stem}ór${kesScriptSm(stem+'ór')}</td>
+          <td>${stem}ár${kesScriptSm(stem+'ár')}</td>
+          <td>${stem}ír${kesScriptSm(stem+'ír')}</td>
         </tr>
         <tr>
           <td class="td-kas">Continuous Direct</td>
-          <td>${stem}eró</td>
-          <td>${stem}erá</td>
-          <td>${stem}erí</td>
+          <td>${stem}eró${kesScriptSm(stem+'eró')}</td>
+          <td>${stem}erá${kesScriptSm(stem+'erá')}</td>
+          <td>${stem}erí${kesScriptSm(stem+'erí')}</td>
         </tr>
         <tr>
           <td class="td-kas">Perfect Direct</td>
-          <td>${stem}ayó</td>
-          <td>${stem}ayá</td>
-          <td>${stem}ayí</td>
+          <td>${stem}ayó${kesScriptSm(stem+'ayó')}</td>
+          <td>${stem}ayá${kesScriptSm(stem+'ayá')}</td>
+          <td>${stem}ayí${kesScriptSm(stem+'ayí')}</td>
         </tr>
         <tr>
           <td class="td-kas">Simple Reflexive</td>
-          <td>${stem}aróth</td>
-          <td>${stem}aráth</td>
-          <td>${stem}aríth</td>
+          <td>${stem}aróth${kesScriptSm(stem+'aróth')}</td>
+          <td>${stem}aráth${kesScriptSm(stem+'aráth')}</td>
+          <td>${stem}aríth${kesScriptSm(stem+'aríth')}</td>
         </tr>
         <tr>
           <td class="td-kas">Continuous Reflexive</td>
-          <td>${stem}eróth</td>
-          <td>${stem}eráth</td>
-          <td>${stem}eríth</td>
+          <td>${stem}eróth${kesScriptSm(stem+'eróth')}</td>
+          <td>${stem}eráth${kesScriptSm(stem+'eráth')}</td>
+          <td>${stem}eríth${kesScriptSm(stem+'eríth')}</td>
         </tr>
         <tr>
           <td class="td-kas">Perfect Reflexive</td>
-          <td>${stem}ayóth</td>
-          <td>${stem}ayáth</td>
-          <td>${stem}ayíth</td>
+          <td>${stem}ayóth${kesScriptSm(stem+'ayóth')}</td>
+          <td>${stem}ayáth${kesScriptSm(stem+'ayáth')}</td>
+          <td>${stem}ayíth${kesScriptSm(stem+'ayíth')}</td>
         </tr>
       </tbody>
     </table>
@@ -1275,7 +1304,7 @@ function renderDict() {
 
   listEl.innerHTML = filtered.map(x => `
     <div class="dict-entry">
-      <div class="de-word">${x.k}</div>
+      <div class="de-word">${x.k}${kesScriptSm(x.k)}</div>
       <div class="de-type">${x.t}</div>
       <div style="color:var(--ink)">${x.e}${x.cls ? ` <span style="color:var(--text-dim); font-size:0.85rem; font-style:italic;">(${x.cls} Class)</span>` : ''}</div>
     </div>
