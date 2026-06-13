@@ -881,6 +881,8 @@ function doTranslate() {
     let clauseTime = "present";
     let clauseAspect = "simple";
     let clauseReflexive = false;
+    let nextIsIndefinite = false;
+    let nextIsDefinite = false;
 
     while (i < words.length) {
       let token = words[i];
@@ -1030,14 +1032,20 @@ function doTranslate() {
             role = "object";
           }
           outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k });
+          nextIsIndefinite = false;
+          nextIsDefinite = false;
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
           let isPlural = isEnglishPlural || (words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]));
           let cls = detectNounClass(matchedEntry.k);
           let inflected = matchedEntry.k;
           // Force accusative if preceded by a preposition
           let precededByPrep = outputComponents.length > 0 && outputComponents[outputComponents.length - 1].type === "preposition";
-          let targetCase = (role === "object" || precededByPrep) ? "accusative" : "nominative";
+          // Indefinite = explicit "a/an" OR no article at all (unless NAME)
+          let isIndefinite = nextIsIndefinite || (!nextIsDefinite && matchedEntry.t !== "NAME");
+          let targetCase = (precededByPrep || (role === "object" && !isIndefinite)) ? "accusative" : "nominative";
           if (precededByPrep) role = "object";
+          nextIsIndefinite = false;
+          nextIsDefinite = false;
 
           if (cls === "1st") {
             let r = matchedEntry.k;
@@ -1105,7 +1113,11 @@ function doTranslate() {
         continue;
       }
 
-      if (token === "the" || token === "a" || token === "an") { i++; continue; }
+      if (token === "the" || token === "a" || token === "an") {
+        if (token === "a" || token === "an") nextIsIndefinite = true;
+        else nextIsDefinite = true;
+        i++; continue;
+      }
       if (token !== "/") outputComponents.push({ type: "unknown", word: `[${token}]` });
       i++;
     }
@@ -1164,8 +1176,8 @@ function doTranslate() {
 
     if (subjs.length > 0 || looseObjs.length > 0 || vbs.length > 0 || prepGroups.length > 0) {
       subjs.forEach(s => finalOrder.push(s.word));
-      looseObjs.forEach(o => finalOrder.push(o.word));
       adjs.forEach(a => finalOrder.push(a.word));
+      looseObjs.forEach(o => finalOrder.push(o.word));
       prepGroups.forEach(g => g.forEach(w => finalOrder.push(w)));
       vbs.forEach(v => finalOrder.push(v.word));
     } else {
