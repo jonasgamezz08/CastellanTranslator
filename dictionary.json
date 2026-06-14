@@ -496,6 +496,7 @@
   { "k": "kilál", "t": "ADV", "e": "many, much" },
   { "k": "kiles", "t": "NOUN", "e": "greatness" },
   { "k": "kimál", "t": "ADJ", "e": "urban, belonging to or originating from a city" },
+  { "k": "kimas", "t": "NOUN", "e": "city, big village" },
   { "k": "kimés", "t": "NOUN", "e": "city, big village" },
   { "k": "kimékwnas", "t": "NOUN", "e": "catacomb, undercity" },
   { "k": "kimesét", "t": "NOUN", "e": "city dweller, burgher, citizen" },
