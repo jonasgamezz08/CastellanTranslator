@@ -37,6 +37,13 @@
   --green-glow: #6db84a;
   --green-light: #9ed97a;
   --green-pale: #c8edae;
+  --white: #f0f7e8;
+  --white-dim: rgba(240,247,232,0.08);
+  --white-border: rgba(240,247,232,0.15);
+  --gold: #d4a830;
+  --gold-light: #e8c84a;
+  --gold-dim: rgba(212,168,48,0.15);
+  --gold-border: rgba(212,168,48,0.3);
   --amber: #c8922a;
   --amber-light: #e8b840;
   --text: #d4e8b8;
@@ -59,35 +66,75 @@ body {
   overflow-x: hidden;
 }
 
+/* Rich layered background with script decorations */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(ellipse at 20% 20%, rgba(74,138,48,0.05) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(26,58,18,0.08) 0%, transparent 50%);
+    radial-gradient(ellipse at 20% 20%, rgba(74,138,48,0.07) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(26,58,18,0.10) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(212,168,48,0.02) 0%, transparent 70%);
   pointer-events: none;
   z-index: 0;
+}
+
+/* Decorative script watermark layer */
+body::after {
+  content: 'Kestelál';
+  font-family: 'VelSuradas', serif;
+  position: fixed;
+  bottom: -2rem;
+  right: -1rem;
+  font-size: clamp(12rem, 25vw, 22rem);
+  color: rgba(74,138,48,0.04);
+  pointer-events: none;
+  z-index: 0;
+  line-height: 1;
+  user-select: none;
 }
 
 header {
   position: relative;
   z-index: 10;
   text-align: center;
-  padding: 2.5rem 1rem 1.5rem;
+  padding: 2.8rem 1rem 2rem;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(10,15,7,0.95) 0%, transparent 100%);
+  background: linear-gradient(180deg, rgba(10,15,7,0.98) 0%, rgba(10,15,7,0.6) 100%);
+  overflow: hidden;
+}
+
+/* Horizontal gold rule lines in header */
+header::before {
+  content: '';
+  position: absolute;
+  left: 5%;
+  right: 5%;
+  top: 1.2rem;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-border), var(--gold-border), transparent);
+}
+header::after {
+  content: '';
+  position: absolute;
+  left: 5%;
+  right: 5%;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--green-mid), var(--gold-border), var(--green-mid), transparent);
 }
 
 .title-rune {
   font-size: 11px;
-  letter-spacing: 0.4em;
-  color: var(--text-muted);
+  letter-spacing: 0.5em;
+  color: var(--gold);
   text-transform: uppercase;
   font-family: 'JetBrains Mono', monospace;
-  margin-bottom: 0.6rem;
+  margin-bottom: 1rem;
+  opacity: 0.7;
 }
 
+/* Animated h1: flips between Latin and script */
 h1 {
   font-family: 'Cinzel', serif;
   font-size: clamp(1.8rem, 5vw, 3rem);
@@ -95,7 +142,41 @@ h1 {
   color: var(--green-light);
   letter-spacing: 0.08em;
   line-height: 1.1;
-  text-shadow: 0 0 40px rgba(109,184,74,0.3);
+  text-shadow: 0 0 60px rgba(109,184,74,0.35), 0 0 120px rgba(109,184,74,0.12);
+  position: relative;
+  display: inline-block;
+  cursor: default;
+  perspective: 600px;
+}
+
+.h1-latin, .h1-script {
+  display: block;
+  transition: opacity 0.5s ease, transform 0.5s ease, filter 0.5s ease;
+  backface-visibility: hidden;
+}
+
+.h1-script {
+  font-family: 'VelSuradas', serif;
+  font-size: 1.05em;
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%) rotateX(90deg);
+  opacity: 0;
+  filter: blur(4px);
+  white-space: nowrap;
+  color: var(--gold-light);
+  text-shadow: 0 0 40px rgba(232,200,74,0.5);
+}
+
+h1:hover .h1-latin {
+  opacity: 0;
+  transform: rotateX(-90deg);
+  filter: blur(4px);
+}
+h1:hover .h1-script {
+  opacity: 1;
+  transform: translateX(-50%) rotateX(0deg);
+  filter: blur(0);
 }
 
 .subtitle {
@@ -103,8 +184,22 @@ h1 {
   font-style: italic;
   font-size: 1.05rem;
   color: var(--text-dim);
-  margin-top: 0.4rem;
+  margin-top: 0.6rem;
+  letter-spacing: 0.03em;
 }
+
+/* Decorative corner script chars in header */
+.header-deco {
+  position: absolute;
+  font-family: 'VelSuradas', serif;
+  color: rgba(109,184,74,0.12);
+  font-size: 4rem;
+  line-height: 1;
+  user-select: none;
+  pointer-events: none;
+}
+.header-deco-left  { top: 50%; left: 1.5rem; transform: translateY(-50%); }
+.header-deco-right { top: 50%; right: 1.5rem; transform: translateY(-50%); }
 
 nav {
   position: relative;
@@ -113,12 +208,13 @@ nav {
   gap: 0;
   padding: 0 1rem;
   border-bottom: 1px solid var(--border);
-  background: var(--bg2);
+  background: linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
   overflow-x: auto;
   scrollbar-width: none;
 }
 nav::-webkit-scrollbar { display: none; }
 
+/* Tab buttons with script hover animation */
 .tab-btn {
   padding: 0.85rem 1.3rem;
   background: none;
@@ -130,13 +226,45 @@ nav::-webkit-scrollbar { display: none; }
   letter-spacing: 0.05em;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 0.2s, border-color 0.2s;
+  position: relative;
+  overflow: hidden;
+  transition: color 0.3s, border-color 0.3s;
 }
-nav .tab-btn:hover { color: var(--text-dim); }
+
+.tab-latin, .tab-script {
+  display: block;
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.tab-script {
+  font-family: 'VelSuradas', serif;
+  font-size: 1.3em;
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%) translateY(8px);
+  opacity: 0;
+  color: var(--gold-light);
+  line-height: 1;
+}
+
+.tab-btn:hover .tab-latin {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.tab-btn:hover .tab-script {
+  opacity: 1;
+  transform: translate(-50%, -50%) translateY(0);
+}
+.tab-btn:hover { color: var(--gold-light); border-bottom-color: var(--gold); }
+
 nav .tab-btn.active {
   color: var(--green-glow);
   border-bottom-color: var(--green-glow);
 }
+nav .tab-btn.active .tab-latin  { opacity: 1; transform: none; }
+nav .tab-btn.active .tab-script { opacity: 0; transform: translate(-50%, -50%) translateY(8px); }
+nav .tab-btn.active:hover .tab-latin  { opacity: 0; transform: translateY(-6px); }
+nav .tab-btn.active:hover .tab-script { opacity: 1; transform: translate(-50%, -50%) translateY(0); }
+nav .tab-btn.active:hover { color: var(--gold-light); border-bottom-color: var(--gold); }
 
 main {
   position: relative;
@@ -155,49 +283,79 @@ main {
   border-radius: var(--radius);
   padding: 1.5rem;
   margin-bottom: 1.5rem;
+  position: relative;
+}
+
+/* Gold top-border accent on cards */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-border), transparent);
 }
 
 .card-title {
   font-family: 'Cinzel', serif;
   font-size: 0.85rem;
   letter-spacing: 0.12em;
-  color: var(--text-muted);
+  color: var(--gold);
   text-transform: uppercase;
   margin-bottom: 1rem;
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  opacity: 0.85;
+}
+.card-title::before {
+  content: '';
+  width: 4px; height: 4px;
+  background: var(--gold);
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 .card-title::after {
   content: '';
   flex: 1;
   height: 1px;
-  background: var(--border);
+  background: linear-gradient(90deg, var(--gold-border), transparent);
 }
 
 textarea, input[type=text], select {
   background: var(--bg3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  color: var(--ink);
+  color: var(--white);
   font-family: 'EB Garamond', serif;
   font-size: 1rem;
   padding: 0.6rem 0.8rem;
   width: 100%;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+textarea:focus, input[type=text]:focus {
+  outline: none;
+  border-color: var(--green-mid);
+  box-shadow: 0 0 0 2px rgba(74,138,48,0.15);
 }
 
 .btn {
-  background: var(--green-deep);
+  background: linear-gradient(135deg, var(--green-deep) 0%, #1f4a16 100%);
   border: 1px solid var(--green-mid);
   border-radius: var(--radius);
-  color: var(--green-pale);
+  color: var(--white);
   font-family: 'Cinzel', serif;
   font-size: 0.8rem;
   letter-spacing: 0.06em;
   padding: 0.55rem 1.3rem;
   cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
-.btn:hover { background: var(--green-mid); border-color: var(--green-bright); }
+.btn:hover {
+  background: linear-gradient(135deg, var(--green-mid) 0%, #3a6a26 100%);
+  border-color: var(--green-bright);
+  box-shadow: 0 0 12px rgba(74,138,48,0.25);
+}
 
 .result-box {
   background: var(--bg3);
@@ -207,7 +365,7 @@ textarea, input[type=text], select {
   margin-top: 1rem;
   font-size: 1.05rem;
   line-height: 1.8;
-  color: var(--ink);
+  color: var(--white);
 }
 
 .direction-row {
@@ -215,6 +373,7 @@ textarea, input[type=text], select {
   align-items: center;
   gap: 1rem;
   margin-bottom: 1rem;
+  color: var(--text);
 }
 
 .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
@@ -300,15 +459,20 @@ td {
 
 <header>
   <div class="title-rune">᛭ Kodikus Gramátai ᛭</div>
-  <h1>Kestelál</h1>
+  <h1>
+    <span class="h1-latin">Kestelál</span>
+    <span class="h1-script">Kestelál</span>
+  </h1>
   <div class="subtitle">Branching Morphosyntactic Classification Engine</div>
+  <span class="header-deco header-deco-left">Kestelál</span>
+  <span class="header-deco header-deco-right">Kestelál</span>
 </header>
 
 <nav>
-  <button class="tab-btn active" data-tab="translate">Translate</button>
-  <button class="tab-btn" data-tab="gloss">Glossing & Analysis</button>
-  <button class="tab-btn" data-tab="grammar">Grammar & Conjugation</button>
-  <button class="tab-btn" data-tab="dictionary">Dictionary</button>
+  <button class="tab-btn active" data-tab="translate"><span class="tab-latin">Translate</span><span class="tab-script">Translate</span></button>
+  <button class="tab-btn" data-tab="gloss"><span class="tab-latin">Glossing & Analysis</span><span class="tab-script">Glossing & Analysis</span></button>
+  <button class="tab-btn" data-tab="grammar"><span class="tab-latin">Grammar & Conjugation</span><span class="tab-script">Grammar & Conjugation</span></button>
+  <button class="tab-btn" data-tab="dictionary"><span class="tab-latin">Dictionary</span><span class="tab-script">Dictionary</span></button>
 </nav>
 
 <main>
@@ -429,13 +593,56 @@ function kesScriptSm(text) {
 async function initializeDataLayer() {
   try {
     const res = await fetch('dictionary.json');
-    if (!res.ok) throw new Error(`HTTP Violation: ${res.status}`);
-    CORE_DICT = await res.json();
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    CORE_DICT = JSON.parse(text.trim());
+    console.log(`Dictionary loaded: ${CORE_DICT.length} entries.`);
   } catch (err) {
-    console.warn("Deploying embedded engine fallback array.");
+    console.warn("fetch failed:", err.message, "— showing manual load option.");
     CORE_DICT = EMERGENCY_FALLBACK_DICT;
+    showDictLoadPrompt();
   }
   renderDict();
+}
+
+function showDictLoadPrompt() {
+  const banner = document.createElement('div');
+  banner.id = 'dict-load-banner';
+  banner.style.cssText = `position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--amber);color:#000;
+    font-family:'JetBrains Mono',monospace;font-size:0.82rem;padding:0.6rem 1.2rem;
+    display:flex;align-items:center;gap:1rem;`;
+  banner.innerHTML = `
+    <span>⚠ dictionary.json could not be loaded automatically (open via a server, or load manually):</span>
+    <label style="cursor:pointer;background:#000;color:var(--amber);padding:0.3rem 0.8rem;border-radius:4px;">
+      Load dictionary.json
+      <input type="file" accept=".json" style="display:none" onchange="loadDictFile(this)">
+    </label>
+    <button onclick="document.getElementById('dict-load-banner').remove()"
+      style="margin-left:auto;background:none;border:1px solid #000;padding:0.2rem 0.6rem;cursor:pointer;border-radius:4px;">✕</button>
+  `;
+  document.body.prepend(banner);
+}
+
+function loadDictFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      CORE_DICT = JSON.parse(e.target.result.trim());
+      console.log(`Dictionary loaded from file: ${CORE_DICT.length} entries.`);
+      renderDict();
+      const banner = document.getElementById('dict-load-banner');
+      if (banner) banner.remove();
+      const notif = document.getElementById('notif');
+      notif.textContent = `✓ Dictionary loaded — ${CORE_DICT.length} words`;
+      notif.classList.add('show');
+      setTimeout(() => notif.classList.remove('show'), 3000);
+    } catch(err) {
+      alert('Failed to parse dictionary.json: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
 }
 
 function findWordByEnglishPhrase(phrase, typeFilter = null) {
@@ -858,7 +1065,11 @@ function doTranslate() {
     }
 
     box.innerHTML = `
-      <p style="margin-bottom:0.5rem"><strong>Structural Word Gloss:</strong></p>
+      <p style="margin-bottom:0.75rem"><strong>Structural Word Gloss:</strong> <span style="color:var(--text-dim);font-style:italic;">${tokens.map((tok, idx) => {
+        let res = analyzedTokens[idx];
+        let gloss = res ? res.gloss.replace(/,\s*/g, ' / ') : `[${tok}]`;
+        return gloss;
+      }).join(' &nbsp;·&nbsp; ')}</span></p>
       <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
         ${tokens.map((tok, idx) => {
           let res = analyzedTokens[idx];
@@ -1031,7 +1242,7 @@ function doTranslate() {
             if (accForm) finalPron = accForm.k;
             role = "object";
           }
-          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k });
+          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: (role === "object" || precededByPrep) ? "accusative" : matchedEntry.case || "nominative" });
           nextIsIndefinite = false;
           nextIsDefinite = false;
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
@@ -1067,7 +1278,7 @@ function doTranslate() {
               if (isPlural) inflected = base + "a / " + base + "sa";
             }
           }
-          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k });
+          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k, case: targetCase });
         } else if (matchedEntry.t === "VERB") {
           hasVerb = true;
           let stem = matchedEntry.k.replace(/ár$|ar$/, '');
@@ -1184,12 +1395,48 @@ function doTranslate() {
       outputComponents.forEach(c => finalOrder.push(c.word));
     }
 
-    let translationText = finalOrder.join(" ");
+    let translationText = finalOrder.filter(w => w && !w.startsWith('[')).join(" ");
     if (translationText) {
       translationText = translationText.charAt(0).toUpperCase() + translationText.slice(1) + ".";
     }
 
+    // Build gloss cards: pair each original English token with its Kestelál output
+    const SKIP_TOKENS = new Set(["the", "a", "an"]);
+    let glossPairs = [];
+    let compIdx = 0;
+    for (let wi = 0; wi < words.length; wi++) {
+      let tok = words[wi];
+      if (SKIP_TOKENS.has(tok)) continue;
+      let comp = outputComponents[compIdx];
+      if (!comp) break;
+      // Skip article flags and invisible components
+      if (comp.word && !comp.word.startsWith('[')) {
+        glossPairs.push({ eng: tok, kes: comp.word, type: comp.type, case: comp.case || null });
+      } else if (comp.word && comp.word.startsWith('[')) {
+        glossPairs.push({ eng: tok, kes: `[?]`, type: "unknown", case: null });
+      }
+      compIdx++;
+    }
+
+    const glossLine = glossPairs.map(p => p.kes).join(' &nbsp;·&nbsp; ');
+    const glossCards = glossPairs.map(p => {
+      let caseLabel = (p.case && p.case !== "nominative")
+        ? `<span style="font-size:0.7rem;color:var(--gold);font-family:'JetBrains Mono',monospace;margin-top:0.15rem;letter-spacing:0.04em;">${p.case.toUpperCase()}</span>`
+        : '';
+      return `
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;
+        background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);
+        padding:0.5rem 0.75rem;min-width:60px;">
+        <span class="kes-script-sm" style="display:block;">${p.kes}</span>
+        <span style="font-family:'Cinzel',serif;font-size:0.9rem;color:var(--green-light);margin-top:0.15rem;">${p.kes}</span>
+        ${caseLabel}
+        <span style="font-size:0.8rem;color:var(--text-dim);font-style:italic;margin-top:0.2rem;">${p.eng}</span>
+      </div>`;
+    }).join('');
+
     box.innerHTML = `
+      <p style="margin-bottom:0.75rem"><strong>Structural Word Gloss:</strong> <span style="color:var(--text-dim);font-style:italic;">${glossLine || '—'}</span></p>
+      <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">${glossCards}</div>
       <p><strong>Synthesized Kestelál Text:</strong> <span style="color:var(--green-light); font-weight:600;">${translationText || 'No translatable tokens parsed.'}</span>${translationText ? kesScript(translationText) : ''}</p>
     `;
   }
