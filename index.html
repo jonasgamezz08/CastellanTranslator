@@ -985,14 +985,22 @@ function renderEngKesGloss(outputComponents, words) {
   let vbs   = outputComponents.filter(c => c.type === "verb");
   let adjs  = outputComponents.filter(c => c.type === "adjective");
   let looseObjs = outputComponents.filter(c => c.role === "object" && !c._inPrepGroup);
+  let genitives = outputComponents.filter(c => c.role === "genitive");
   let prepGroups = [];
   for (let idx = 0; idx < outputComponents.length; idx++) {
     if (outputComponents[idx].type === "preposition") {
       let prep = outputComponents[idx];
       let next = outputComponents[idx + 1];
+      let afterNext = outputComponents[idx + 2];
       if (next && (next.type === "noun" || next.type === "name" || next.type === "pronoun") && next.role === "object") {
-        prepGroups.push([prep.word, next.word]);
-        outputComponents[idx + 1]._inPrepGroup = true;
+        next._inPrepGroup = true;
+        // Check if there's a genitive immediately after the noun
+        if (afterNext && afterNext.role === "genitive") {
+          afterNext._inPrepGroup = true;
+          prepGroups.push([prep.word, next.word, afterNext.word]);
+        } else {
+          prepGroups.push([prep.word, next.word]);
+        }
       } else {
         prepGroups.push([prep.word]);
       }
@@ -1001,23 +1009,20 @@ function renderEngKesGloss(outputComponents, words) {
 
   let finalOrder = [];
   if (subjs.length > 0 || looseObjs.length > 0 || vbs.length > 0 || prepGroups.length > 0) {
-    // Subject-modifying adjectives go after subject
     subjs.forEach(s => finalOrder.push(s.word));
+    // Genitives not in a prep group belong to the subject
+    genitives.filter(g => !g._inPrepGroup).forEach(g => finalOrder.push(g.word));
     outputComponents.filter(c => c.type === "adjective" && c._modifies === "subject").forEach(a => finalOrder.push(a.word));
 
-    // Object-modifying adjectives: inflect to match the object's case, pair with object
     let objAdjs = outputComponents.filter(c => c.type === "adjective" && c._modifies === "object");
     looseObjs.forEach((o, oi) => {
-      // Place any object adjective that was positioned before this noun
       let adj = objAdjs[oi];
       if (adj) {
-        // Re-inflect adjective to match object case
         let inflectedAdj = adj.word;
         if (o.case === "accusative" && adj._entry) {
           const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
           const VOWELS = "aeiouáéíóú";
           let base = adj._entry.k;
-          // Accusative singular adjective: same doubling/stripping rules
           if (!VOWELS.includes(base[base.length - 1])) {
             let lastCh = base[base.length - 1];
             let finalCons = (base.length >= 2 && base[base.length - 2] === lastCh) ? '' : lastCh;
@@ -1026,13 +1031,14 @@ function renderEngKesGloss(outputComponents, words) {
           } else {
             inflectedAdj = base + "e";
           }
-          // Update the component word so the gloss card reflects this too
           adj.word = inflectedAdj;
           adj.case = "accusative";
         }
         finalOrder.push(inflectedAdj);
       }
       finalOrder.push(o.word);
+      // Loose genitives after loose objects
+      genitives.filter(g => !g._inPrepGroup).forEach(g => finalOrder.push(g.word));
     });
 
     prepGroups.forEach(g => g.forEach(w => finalOrder.push(w)));
@@ -1045,7 +1051,7 @@ function renderEngKesGloss(outputComponents, words) {
   if (translationText) translationText = translationText.charAt(0).toUpperCase() + translationText.slice(1) + ".";
 
   // Build gloss pairs
-  const SKIP_TOKENS = new Set(["the", "a", "an"]);
+  const SKIP_TOKENS = new Set(["the", "a", "an", "of"]);
   let glossPairs = [];
   let compIdx = 0;
   for (let wi = 0; wi < words.length; wi++) {
@@ -1310,6 +1316,7 @@ function doTranslate() {
     let clauseReflexive = false;
     let nextIsIndefinite = false;
     let nextIsDefinite = false;
+    let nextIsGenitive = false;
 
     while (i < words.length) {
       let token = words[i];
@@ -1461,18 +1468,34 @@ function doTranslate() {
           outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: (role === "object" || precededByPrep) ? "accusative" : matchedEntry.case || "nominative", _entry: matchedEntry, _inflectParams: { type: "pronoun", role } });
           nextIsIndefinite = false;
           nextIsDefinite = false;
+          nextIsGenitive = false;
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
           let isPlural = isEnglishPlural || (words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]));
           let cls = detectNounClass(matchedEntry.k);
           let inflected = matchedEntry.k;
           // Force accusative if preceded by a preposition
           let precededByPrep = outputComponents.length > 0 && outputComponents[outputComponents.length - 1].type === "preposition";
-          // Indefinite = explicit "a/an" OR no article at all (unless NAME)
-          let isIndefinite = nextIsIndefinite || (!nextIsDefinite && matchedEntry.t !== "NAME");
-          let targetCase = (precededByPrep || (role === "object" && !isIndefinite)) ? "accusative" : "nominative";
+          let isIndefinite = nextIsIndefinite || (!nextIsDefinite && !nextIsGenitive && matchedEntry.t !== "NAME");
+          let targetCase = nextIsGenitive ? "genitive"
+            : (precededByPrep || (role === "object" && !isIndefinite)) ? "accusative"
+            : "nominative";
           if (precededByPrep) role = "object";
+
+          // Genitive inflection
+          if (nextIsGenitive) {
+            let cls2 = detectNounClass(matchedEntry.k);
+            if (cls2 === "1st") {
+              inflected = matchedEntry.k.toLowerCase() + "i";
+            } else {
+              let base2 = matchedEntry.k.toLowerCase().endsWith('s') ? matchedEntry.k.slice(0, -1) : matchedEntry.k;
+              inflected = base2.toLowerCase() + "i";
+            }
+            role = "genitive";
+          }
+
           nextIsIndefinite = false;
           nextIsDefinite = false;
+          nextIsGenitive = false;
 
           if (cls === "1st") {
             let r = matchedEntry.k;
@@ -1534,6 +1557,11 @@ function doTranslate() {
         }
         i += matchLength;
         continue;
+      }
+
+      if (token === "of") {
+        nextIsGenitive = true;
+        i++; continue;
       }
 
       if (token === "the" || token === "a" || token === "an") {
@@ -1652,111 +1680,150 @@ function doDeclension() {
   const box = document.getElementById('decl-result');
   if (!w) return;
 
-  let cls = detectNounClass(w);
-  let r = w.toLowerCase();
-  let endsInS = r.endsWith('s');
-  let sRoot = endsInS ? r.slice(0, -1) : r;
-
-  // Strip the last accented vowel in the stem (used when the suffix carries its own accent)
   const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
   function stripStemAccent(stem) {
-    // Reverse, replace the first accented vowel found, reverse back
-    return stem.split('').reverse().join('')
-      .replace(/[áéíóú]/, c => ACCENT_MAP[c])
-      .split('').reverse().join('');
+    return stem.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP[c]).split('').reverse().join('');
   }
-
-  // Check if the word ends in a consonant (for consonant-doubling rule)
   const VOWELS = "aeiouáéíóú";
-  function endsInConsonant(s) {
-    return s.length > 0 && !VOWELS.includes(s[s.length - 1]);
+  function endsInConsonant(s) { return s.length > 0 && !VOWELS.includes(s[s.length - 1]); }
+
+  // Find dictionary synonyms (same type, overlapping definitions)
+  function getSynonymStems(baseWord) {
+    let entry = CORE_DICT.find(x => x.k.toLowerCase() === baseWord.toLowerCase());
+    if (!entry) return [baseWord];
+    let defTokens = new Set(entry.e.toLowerCase().split(/[,;\/]+/).map(s => s.trim()).filter(Boolean));
+    let synonyms = CORE_DICT.filter(x => {
+      if (x.t !== entry.t) return false;
+      let xTokens = x.e.toLowerCase().split(/[,;\/]+/).map(s => s.trim());
+      return xTokens.some(t => defTokens.has(t));
+    }).map(x => x.k);
+    // Primary entry first
+    return [entry.k, ...synonyms.filter(k => k !== entry.k)];
   }
 
-  let nomSing, nomPlur, accSing, accPlur, genSing, genPlur, insSing, insPlur;
+  // Compute all forms for a given stem
+  function computeForms(stem) {
+    let cls = detectNounClass(stem);
+    let r = stem.toLowerCase();
+    let endsInS = r.endsWith('s');
+    let sRoot = endsInS ? r.slice(0, -1) : r;
 
-  if (cls === "1st") {
-    nomSing = w;
-
-    if (endsInS) {
-      // Words ending in -s: double the s → -ssa / accented variant -sá (strip stem accent)
-      // If sRoot already ends in s (i.e. word ends in -ss), don't add a third s
-      let sSuffix = sRoot.endsWith('s') ? '' : 's';
-      nomPlur = sRoot + sSuffix + "sa";
-      accSing = `${sRoot}${sSuffix}se / ${stripStemAccent(sRoot)}${sSuffix}é`;
-      accPlur = stripStemAccent(r) + "éa";
-      genSing = r + "i";
-      genPlur = stripStemAccent(r) + "ía";
-      insSing = r + "u";
-      insPlur = stripStemAccent(r) + "úa";
-    } else if (endsInConsonant(r)) {
-      // Words ending in a consonant: double final consonant + vowel / OR strip accent + accented suffix vowel
-      // If already doubled (e.g. -ss), don't add a third
-      let lastCh = r[r.length - 1];
-      let finalCons = (r.length >= 2 && r[r.length - 2] === lastCh) ? '' : lastCh;
-      let stripped = stripStemAccent(r);
-      nomPlur = `${r}${finalCons}a / ${stripped}á`;
-      accSing = `${r}${finalCons}e / ${stripped}é`;
-      accPlur = stripped + "éa";
-      genSing = r + "i";
-      genPlur = stripped + "ía";
-      insSing = r + "u";
-      insPlur = stripped + "úa";
+    if (cls === "1st") {
+      if (endsInS) {
+        let sSuffix = sRoot.endsWith('s') ? '' : 's';
+        return {
+          nomSing: [stem],
+          nomPlur: [sRoot + sSuffix + "sa"],
+          accSing: [sRoot + sSuffix + "se", stripStemAccent(sRoot) + sSuffix + "é"],
+          accPlur: [stripStemAccent(r) + "éa"],
+          genSing: [r + "i"],
+          genPlur: [stripStemAccent(r) + "ía"],
+          insSing: [r + "u"],
+          insPlur: [stripStemAccent(r) + "úa"],
+        };
+      } else if (endsInConsonant(r)) {
+        let lastCh = r[r.length - 1];
+        let finalCons = (r.length >= 2 && r[r.length - 2] === lastCh) ? '' : lastCh;
+        let stripped = stripStemAccent(r);
+        return {
+          nomSing: [stem],
+          nomPlur: [r + finalCons + "a", stripped + "á"],
+          accSing: [r + finalCons + "e", stripped + "é"],
+          accPlur: [stripped + "éa"],
+          genSing: [r + "i"],
+          genPlur: [stripped + "ía"],
+          insSing: [r + "u"],
+          insPlur: [stripped + "úa"],
+        };
+      } else {
+        return {
+          nomSing: [stem],
+          nomPlur: [r + "a"],
+          accSing: [r + "e", r + "é"],
+          accPlur: [r + "éa"],
+          genSing: [r + "i"],
+          genPlur: [r + "ía"],
+          insSing: [r + "u"],
+          insPlur: [r + "úa"],
+        };
+      }
     } else {
-      // Words ending in a vowel: plain suffix append
-      nomPlur = r + "a";
-      accSing = `${r}e / ${r}é`;
-      accPlur = r + "éa";
-      genSing = r + "i";
-      genPlur = r + "ía";
-      insSing = r + "u";
-      insPlur = r + "úa";
+      let stemV = detectVocalicStem(stem);
+      let base = endsInS ? r.slice(0, -1) : r;
+      return {
+        nomSing: [stem],
+        nomPlur: [base + "a", base + "sa"],
+        accSing: [base],
+        accPlur: [base + stemV + "n"],
+        genSing: [base + "i"],
+        genPlur: [base + "ya"],
+        insSing: [base + "u"],
+        insPlur: [base + "wa"],
+      };
     }
-  } else {
-    let stem = detectVocalicStem(w);
-    let base = endsInS ? r.slice(0, -1) : r;
-    nomSing = w;
-    nomPlur = base + "a / " + base + "sa";
-    accSing = base;
-    accPlur = base + stem + "n";
-    genSing = base + "i";
-    genPlur = base + "ya";
-    insSing = base + "u";
-    insPlur = base + "wa";
+  }
+
+  // Gather all stems (primary + synonyms) and merge their options per cell
+  let stems = getSynonymStems(w);
+  let cases = ["nomSing","nomPlur","accSing","accPlur","genSing","genPlur","insSing","insPlur"];
+  let merged = {};
+  cases.forEach(c => merged[c] = []);
+
+  stems.forEach(stem => {
+    let f = computeForms(stem);
+    cases.forEach(c => {
+      f[c].forEach(opt => {
+        if (!merged[c].includes(opt)) merged[c].push(opt);
+      });
+    });
+  });
+
+  // Store options in a global registry so onchange doesn't need inline JSON
+  window._declOptions = {};
+
+  // Render a cell: if single option show plain, if multiple show dropdown
+  function cell(cellId, options) {
+    window._declOptions[cellId] = options;
+    let first = options[0] || '';
+    if (options.length === 1) {
+      return `<td id="dc-${cellId}">${first}${kesScriptSm(first)}</td>`;
+    }
+    let opts = options.map((o, i) =>
+      `<option value="${i}">${o}</option>`
+    ).join('');
+    return `<td id="dc-${cellId}">
+      <div id="dc-display-${cellId}" style="font-family:'Cinzel',serif;color:var(--green-light);margin-bottom:0.25rem;">${first}</div>
+      ${kesScriptSm(first).replace('class="kes-script-sm"', `class="kes-script-sm" id="dc-script-${cellId}"`)}
+      <select onchange="declCellChange('${cellId}', this.value)"
+        style="margin-top:0.3rem;background:var(--bg4);border:1px solid var(--gold-border);
+        border-radius:3px;color:var(--gold-light);font-family:'Cinzel',serif;font-size:0.72rem;
+        padding:0.15rem 0.3rem;cursor:pointer;width:100%;">
+        ${opts}
+      </select>
+    </td>`;
   }
 
   box.innerHTML = `
     <table>
-      <thead>
-        <tr>
-          <th>Case</th>
-          <th>Singular</th>
-          <th>Plural</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Case</th><th>Singular</th><th>Plural</th></tr></thead>
       <tbody>
-        <tr>
-          <td class="td-kas">Nominative</td>
-          <td>${nomSing}${kesScriptSm(nomSing)}</td>
-          <td>${nomPlur}${kesScriptSm(nomPlur)}</td>
-        </tr>
-        <tr>
-          <td class="td-kas">Accusative</td>
-          <td>${accSing}${kesScriptSm(accSing)}</td>
-          <td>${accPlur}${kesScriptSm(accPlur)}</td>
-        </tr>
-        <tr>
-          <td class="td-kas">Genitive</td>
-          <td>${genSing}${kesScriptSm(genSing)}</td>
-          <td>${genPlur}${kesScriptSm(genPlur)}</td>
-        </tr>
-        <tr>
-          <td class="td-kas">Instrumental</td>
-          <td>${insSing}${kesScriptSm(insSing)}</td>
-          <td>${insPlur}${kesScriptSm(insPlur)}</td>
-        </tr>
+        <tr><td class="td-kas">Nominative</td>  ${cell('nomSing',merged.nomSing)} ${cell('nomPlur',merged.nomPlur)}</tr>
+        <tr><td class="td-kas">Accusative</td>  ${cell('accSing',merged.accSing)} ${cell('accPlur',merged.accPlur)}</tr>
+        <tr><td class="td-kas">Genitive</td>    ${cell('genSing',merged.genSing)} ${cell('genPlur',merged.genPlur)}</tr>
+        <tr><td class="td-kas">Instrumental</td>${cell('insSing',merged.insSing)} ${cell('insPlur',merged.insPlur)}</tr>
       </tbody>
     </table>
   `;
+}
+
+function declCellChange(cellId, idx) {
+  let options = window._declOptions && window._declOptions[cellId];
+  if (!options) return;
+  let chosen = options[parseInt(idx)];
+  let disp = document.getElementById('dc-display-' + cellId);
+  let scr  = document.getElementById('dc-script-' + cellId);
+  if (disp) disp.textContent = chosen;
+  if (scr)  scr.textContent = chosen;
 }
 
 function doConjugate() {
