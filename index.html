@@ -886,6 +886,222 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
   return null;
 }
 
+// ── Variant system ─────────────────────────────────────────────────────────
+
+// Global state: variantSelections[translationId][compIdx] = chosenVariantIndex
+window._variantState = { id: 0, selections: {}, components: [], words: [] };
+
+function findVariants(entry) {
+  if (!entry) return [];
+  // Collect all definition tokens from this entry
+  const defTokens = new Set(
+    entry.e.toLowerCase().split(/[,;\/]+/).map(s => s.trim()).filter(Boolean)
+  );
+  // Find all dict entries of same type that share at least one definition token
+  return CORE_DICT.filter(x => {
+    if (x.t !== entry.t) return false;
+    const xTokens = x.e.toLowerCase().split(/[,;\/]+/).map(s => s.trim());
+    return xTokens.some(t => defTokens.has(t));
+  });
+}
+
+function reInflectEntry(entry, inflectParams) {
+  if (!entry || !inflectParams) return entry ? entry.k : '';
+  const p = inflectParams;
+
+  if (p.type === "verb") {
+    let stem = entry.k.replace(/ár$|ar$/, '');
+    return stem + p.suffix;
+  }
+  if (p.type === "adj") {
+    const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+    const VOWELS = "aeiouáéíóú";
+    let base = entry.k;
+    if (p.subjectIsPlural && !VOWELS.includes(base[base.length - 1])) {
+      let lastCh = base[base.length - 1];
+      let finalCons = (base.length >= 2 && base[base.length - 2] === lastCh) ? '' : lastCh;
+      let stripped = base.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP[c]).split('').reverse().join('');
+      return `${base}${finalCons}a / ${stripped}á`;
+    } else if (p.subjectIsPlural) {
+      return base + "a";
+    }
+    return base;
+  }
+  if (p.type === "prep") return entry.k;
+  if (p.type === "noun") {
+    let cls = p.cls || detectNounClass(entry.k);
+    let inflected = entry.k;
+    if (cls === "1st") {
+      let r = entry.k;
+      let endsInS = r.toLowerCase().endsWith('s');
+      let sRoot = endsInS ? r.slice(0, -1) : r;
+      if (p.targetCase === "accusative") {
+        if (p.isPlural) inflected = `${r}éa`;
+        else inflected = endsInS ? (sRoot.endsWith('s') ? `${sRoot}se` : `${sRoot}sse`) : `${r}e`;
+      } else {
+        if (p.isPlural) inflected = endsInS ? (sRoot.endsWith('s') ? `${sRoot}sa` : `${sRoot}ssa`) : `${r}a`;
+        else inflected = r;
+      }
+    } else {
+      let stem = detectVocalicStem(entry.k);
+      let base = entry.k.endsWith('s') ? entry.k.slice(0, -1) : entry.k;
+      if (p.targetCase === "accusative") {
+        inflected = p.isPlural ? base + stem + "n" : base;
+      } else {
+        inflected = p.isPlural ? base + "a / " + base + "sa" : entry.k;
+      }
+    }
+    return inflected;
+  }
+  if (p.type === "pronoun") {
+    if (p.role === "object") {
+      let accForm = CORE_DICT.find(x => x.t === "PRON" && x.e.toLowerCase() === entry.e.toLowerCase() && x.case === "accusative");
+      return accForm ? accForm.k : entry.k;
+    }
+    return entry.k;
+  }
+  return entry.k;
+}
+
+function switchVariant(compIdx, variantIdx) {
+  let state = window._variantState;
+  state.selections[compIdx] = variantIdx;
+  let comp = state.components[compIdx];
+  let variants = findVariants(comp._entry);
+  let chosen = variants[variantIdx];
+  if (chosen) {
+    comp._entry = chosen;
+    comp.word = reInflectEntry(chosen, comp._inflectParams);
+  }
+  // Re-render the full gloss + synthesized text
+  renderEngKesGloss(state.components, state.words);
+}
+
+function renderEngKesGloss(outputComponents, words) {
+  const box = document.getElementById('translate-result');
+
+  // Rebuild finalOrder from updated components
+  let subjs = outputComponents.filter(c => c.role === "subject");
+  let vbs   = outputComponents.filter(c => c.type === "verb");
+  let adjs  = outputComponents.filter(c => c.type === "adjective");
+  let looseObjs = outputComponents.filter(c => c.role === "object" && !c._inPrepGroup);
+  let prepGroups = [];
+  for (let idx = 0; idx < outputComponents.length; idx++) {
+    if (outputComponents[idx].type === "preposition") {
+      let prep = outputComponents[idx];
+      let next = outputComponents[idx + 1];
+      if (next && (next.type === "noun" || next.type === "name" || next.type === "pronoun") && next.role === "object") {
+        prepGroups.push([prep.word, next.word]);
+        outputComponents[idx + 1]._inPrepGroup = true;
+      } else {
+        prepGroups.push([prep.word]);
+      }
+    }
+  }
+
+  let finalOrder = [];
+  if (subjs.length > 0 || looseObjs.length > 0 || vbs.length > 0 || prepGroups.length > 0) {
+    // Subject-modifying adjectives go after subject
+    subjs.forEach(s => finalOrder.push(s.word));
+    outputComponents.filter(c => c.type === "adjective" && c._modifies === "subject").forEach(a => finalOrder.push(a.word));
+
+    // Object-modifying adjectives: inflect to match the object's case, pair with object
+    let objAdjs = outputComponents.filter(c => c.type === "adjective" && c._modifies === "object");
+    looseObjs.forEach((o, oi) => {
+      // Place any object adjective that was positioned before this noun
+      let adj = objAdjs[oi];
+      if (adj) {
+        // Re-inflect adjective to match object case
+        let inflectedAdj = adj.word;
+        if (o.case === "accusative" && adj._entry) {
+          const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+          const VOWELS = "aeiouáéíóú";
+          let base = adj._entry.k;
+          // Accusative singular adjective: same doubling/stripping rules
+          if (!VOWELS.includes(base[base.length - 1])) {
+            let lastCh = base[base.length - 1];
+            let finalCons = (base.length >= 2 && base[base.length - 2] === lastCh) ? '' : lastCh;
+            let stripped = base.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP[c]).split('').reverse().join('');
+            inflectedAdj = `${base}${finalCons}e / ${stripped}é`;
+          } else {
+            inflectedAdj = base + "e";
+          }
+          // Update the component word so the gloss card reflects this too
+          adj.word = inflectedAdj;
+          adj.case = "accusative";
+        }
+        finalOrder.push(inflectedAdj);
+      }
+      finalOrder.push(o.word);
+    });
+
+    prepGroups.forEach(g => g.forEach(w => finalOrder.push(w)));
+    vbs.forEach(v => finalOrder.push(v.word));
+  } else {
+    outputComponents.forEach(c => finalOrder.push(c.word));
+  }
+
+  let translationText = finalOrder.filter(w => w && !w.startsWith('[')).join(" ");
+  if (translationText) translationText = translationText.charAt(0).toUpperCase() + translationText.slice(1) + ".";
+
+  // Build gloss pairs
+  const SKIP_TOKENS = new Set(["the", "a", "an"]);
+  let glossPairs = [];
+  let compIdx = 0;
+  for (let wi = 0; wi < words.length; wi++) {
+    let tok = words[wi];
+    if (SKIP_TOKENS.has(tok)) continue;
+    let comp = outputComponents[compIdx];
+    if (!comp) break;
+    if (comp.word) {
+      let variants = comp._entry ? findVariants(comp._entry) : [];
+      let selIdx = (window._variantState.selections[compIdx] !== undefined)
+        ? window._variantState.selections[compIdx] : 0;
+      glossPairs.push({ eng: tok, kes: comp.word, type: comp.type, case: comp.case || null, variants, selIdx, compIdx });
+    }
+    compIdx++;
+  }
+
+  const glossLine = glossPairs.map(p => p.kes).join(' &nbsp;·&nbsp; ');
+
+  const glossCards = glossPairs.map(p => {
+    let caseLabel = (p.case && p.case !== "nominative")
+      ? `<span style="font-size:0.7rem;color:var(--gold);font-family:'JetBrains Mono',monospace;margin-top:0.1rem;letter-spacing:0.04em;">${p.case.toUpperCase()}</span>`
+      : '';
+
+    let variantSelector = '';
+    if (p.variants.length > 1) {
+      let options = p.variants.map((v, vi) =>
+        `<option value="${vi}" ${vi === p.selIdx ? 'selected' : ''}>${v.k}</option>`
+      ).join('');
+      variantSelector = `
+        <select onchange="switchVariant(${p.compIdx}, parseInt(this.value))"
+          style="margin-top:0.35rem;background:var(--bg4);border:1px solid var(--gold-border);
+          border-radius:3px;color:var(--gold-light);font-family:'Cinzel',serif;font-size:0.7rem;
+          padding:0.15rem 0.3rem;cursor:pointer;width:100%;text-align:center;">
+          ${options}
+        </select>`;
+    }
+
+    return `
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;
+        background:rgba(255,255,255,0.03);border:1px solid ${p.variants.length > 1 ? 'var(--gold-border)' : 'var(--border)'};
+        border-radius:var(--radius);padding:0.5rem 0.75rem;min-width:60px;">
+        <span class="kes-script-sm" style="display:block;">${p.kes}</span>
+        <span style="font-family:'Cinzel',serif;font-size:0.9rem;color:var(--green-light);margin-top:0.15rem;">${p.kes}</span>
+        ${caseLabel}
+        ${variantSelector}
+        <span style="font-size:0.8rem;color:var(--text-dim);font-style:italic;margin-top:0.2rem;">${p.eng}</span>
+      </div>`;
+  }).join('');
+
+  box.innerHTML = `
+    <p style="margin-bottom:0.75rem"><strong>Structural Word Gloss:</strong> <span style="color:var(--text-dim);font-style:italic;">${glossLine || '—'}</span></p>
+    <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">${glossCards}</div>
+    <p><strong>Synthesized Kestelál Text:</strong> <span style="color:var(--green-light); font-weight:600;">${translationText || 'No translatable tokens parsed.'}</span>${translationText ? kesScript(translationText) : ''}</p>
+  `;
+}
+
 function doTranslate() {
   const dir = document.querySelector('input[name=direction]:checked').value;
   const input = document.getElementById('translate-input').value.trim();
@@ -1242,7 +1458,7 @@ function doTranslate() {
             if (accForm) finalPron = accForm.k;
             role = "object";
           }
-          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: (role === "object" || precededByPrep) ? "accusative" : matchedEntry.case || "nominative" });
+          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: (role === "object" || precededByPrep) ? "accusative" : matchedEntry.case || "nominative", _entry: matchedEntry, _inflectParams: { type: "pronoun", role } });
           nextIsIndefinite = false;
           nextIsDefinite = false;
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
@@ -1278,16 +1494,15 @@ function doTranslate() {
               if (isPlural) inflected = base + "a / " + base + "sa";
             }
           }
-          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k, case: targetCase });
+          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k, case: targetCase, _entry: matchedEntry, _inflectParams: { type: "noun", targetCase, isPlural, cls } });
         } else if (matchedEntry.t === "VERB") {
           hasVerb = true;
           let stem = matchedEntry.k.replace(/ár$|ar$/, '');
           let isPast = token.endsWith("ed") || token.endsWith("ied") ||
                        ["ate", "spoke", "did", "fell", "was", "were"].includes(token);
           let suffix = isPast ? "ór" : "ár";
-          outputComponents.push({ type: "verb", word: stem + suffix });
+          outputComponents.push({ type: "verb", word: stem + suffix, _entry: matchedEntry, _inflectParams: { type: "verb", suffix } });
         } else if (matchedEntry.t === "ADJ") {
-          // Determine plural adjective form using same rules as noun consonant-doubling
           const ACCENT_MAP_ADJ = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
           function stripAdjAccent(s) {
             return s.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP_ADJ[c]).split('').reverse().join('');
@@ -1302,23 +1517,20 @@ function doTranslate() {
             )
           ) || isEnglishPlural;
           if (subjectIsPlural && !ADJ_VOWELS.includes(adjBase[adjBase.length - 1])) {
-            // Consonant-final adjective plural: double final consonant + a / strip accent + á
             let lastCh = adjBase[adjBase.length - 1];
             let finalCons = (adjBase.length >= 2 && adjBase[adjBase.length - 2] === lastCh) ? '' : lastCh;
             let stripped = stripAdjAccent(adjBase);
             adjPlural = `${adjBase}${finalCons}a / ${stripped}á`;
           } else if (subjectIsPlural) {
-            // Vowel-final adjective plural
             adjPlural = adjBase + "a";
           } else {
             adjPlural = adjBase;
           }
-          outputComponents.push({ type: "adjective", word: subjectIsPlural ? adjPlural : adjBase });
+          outputComponents.push({ type: "adjective", word: subjectIsPlural ? adjPlural : adjBase, _entry: matchedEntry, _inflectParams: { type: "adj", subjectIsPlural }, _modifies: hasVerb ? "object" : "subject" });
         } else if (matchedEntry.t === "PREP") {
-          // Mark that the next noun should be accusative
-          outputComponents.push({ type: "preposition", word: matchedEntry.k });
+          outputComponents.push({ type: "preposition", word: matchedEntry.k, _entry: matchedEntry, _inflectParams: { type: "prep" } });
         } else {
-          outputComponents.push({ type: "other", word: matchedEntry.k });
+          outputComponents.push({ type: "other", word: matchedEntry.k, _entry: matchedEntry });
         }
         i += matchLength;
         continue;
@@ -1395,50 +1607,9 @@ function doTranslate() {
       outputComponents.forEach(c => finalOrder.push(c.word));
     }
 
-    let translationText = finalOrder.filter(w => w && !w.startsWith('[')).join(" ");
-    if (translationText) {
-      translationText = translationText.charAt(0).toUpperCase() + translationText.slice(1) + ".";
-    }
-
-    // Build gloss cards: pair each original English token with its Kestelál output
-    const SKIP_TOKENS = new Set(["the", "a", "an"]);
-    let glossPairs = [];
-    let compIdx = 0;
-    for (let wi = 0; wi < words.length; wi++) {
-      let tok = words[wi];
-      if (SKIP_TOKENS.has(tok)) continue;
-      let comp = outputComponents[compIdx];
-      if (!comp) break;
-      // Skip article flags and invisible components
-      if (comp.word && !comp.word.startsWith('[')) {
-        glossPairs.push({ eng: tok, kes: comp.word, type: comp.type, case: comp.case || null });
-      } else if (comp.word && comp.word.startsWith('[')) {
-        glossPairs.push({ eng: tok, kes: `[?]`, type: "unknown", case: null });
-      }
-      compIdx++;
-    }
-
-    const glossLine = glossPairs.map(p => p.kes).join(' &nbsp;·&nbsp; ');
-    const glossCards = glossPairs.map(p => {
-      let caseLabel = (p.case && p.case !== "nominative")
-        ? `<span style="font-size:0.7rem;color:var(--gold);font-family:'JetBrains Mono',monospace;margin-top:0.15rem;letter-spacing:0.04em;">${p.case.toUpperCase()}</span>`
-        : '';
-      return `
-      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;
-        background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);
-        padding:0.5rem 0.75rem;min-width:60px;">
-        <span class="kes-script-sm" style="display:block;">${p.kes}</span>
-        <span style="font-family:'Cinzel',serif;font-size:0.9rem;color:var(--green-light);margin-top:0.15rem;">${p.kes}</span>
-        ${caseLabel}
-        <span style="font-size:0.8rem;color:var(--text-dim);font-style:italic;margin-top:0.2rem;">${p.eng}</span>
-      </div>`;
-    }).join('');
-
-    box.innerHTML = `
-      <p style="margin-bottom:0.75rem"><strong>Structural Word Gloss:</strong> <span style="color:var(--text-dim);font-style:italic;">${glossLine || '—'}</span></p>
-      <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">${glossCards}</div>
-      <p><strong>Synthesized Kestelál Text:</strong> <span style="color:var(--green-light); font-weight:600;">${translationText || 'No translatable tokens parsed.'}</span>${translationText ? kesScript(translationText) : ''}</p>
-    `;
+    // Store state for variant switching, then render
+    window._variantState = { selections: {}, components: outputComponents, words };
+    renderEngKesGloss(outputComponents, words);
   }
 }
 
