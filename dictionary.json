@@ -29,7 +29,7 @@
   { "k": "ke", "t": "PREP", "e": "with, alongside", "base": "ke" },
   { "k": "kene", "t": "PREP", "e": "equal to, as, like" },
   { "k": "kwe", "t": "PREP", "e": "below, less than, under" },
-  { "k": "wed", "t": "CONJ", "e": "if, with, for" },
+  { "k": "wed", "t": "CONJ", "e": "if, with, for", "_governsCase": "instrumental"},
   { "k": "faufos", "t": "NOUN", "e": "canal, irrigation" },
   { "k": "rugobát", "t": "NOUN", "e": "sniffer" },
   { "k": "venéras", "t": "NOUN", "e": "inauguration, foundation, opening, beginning"},
