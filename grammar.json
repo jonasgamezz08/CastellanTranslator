@@ -1,0 +1,208 @@
+{
+  "_meta": {
+    "description": "Externalized grammar rules for Kestelál. Loaded alongside dictionary.json so the language's morphology (noun classes, case endings, verb paradigms, word order) can be edited as data instead of code. Every {STEM} / {ROOT} placeholder is substituted at runtime by the grammar engine (see kestelalGrammar.* helpers in index.html).",
+    "version": "1.0.0"
+  },
+
+  "nounClasses": {
+    "_comment": "Rules for detecting which class an unmarked noun stem belongs to, checked in order. 'cls' on a dictionary entry always overrides automatic detection.",
+    "detection": {
+      "rule": "vowelGroupCount",
+      "singleVowelGroup": "1st",
+      "multiVowelGroupNotEndingInS": "1st",
+      "multiVowelGroupEndingInS": "2nd"
+    },
+    "classes": {
+      "1st": {
+        "_comment": "Consonant-leaning class. Three stem shapes depending on the bare form: ends in -s, ends in a consonant, ends in a vowel. Each shape has its own suffix set below. {R}=lowercased stem, {STRIPPED}=stem with final accent removed, {SROOT}=stem with trailing -s removed, {FINALCONS}=final consonant repeated for gemination (empty if stem already ends in a doubled consonant).",
+        "shapes": {
+          "endsInS": {
+            "nomSing": ["{STEM}"],
+            "nomPlur": ["{SROOT}{SSUFFIX}sa"],
+            "accSing": ["{SROOT}{SSUFFIX}se", "{STRIPPED_SROOT}{SSUFFIX}é"],
+            "accPlur": ["{STRIPPED_R}éa"],
+            "genSing": ["{R}i"],
+            "genPlur": ["{STRIPPED_R}ía"],
+            "insSing": ["{R}u"],
+            "insPlur": ["{STRIPPED_R}úa"]
+          },
+          "endsInConsonant": {
+            "nomSing": ["{STEM}"],
+            "nomPlur": ["{R}{FINALCONS}a", "{STRIPPED_R}á"],
+            "accSing": ["{R}{FINALCONS}e", "{STRIPPED_R}é"],
+            "accPlur": ["{STRIPPED_R}éa"],
+            "genSing": ["{R}i"],
+            "genPlur": ["{STRIPPED_R}ía"],
+            "insSing": ["{R}u"],
+            "insPlur": ["{STRIPPED_R}úa"]
+          },
+          "endsInVowel": {
+            "nomSing": ["{STEM}"],
+            "nomPlur": ["{R}a"],
+            "accSing": ["{R}e", "{R}é"],
+            "accPlur": ["{R}éa"],
+            "genSing": ["{R}i"],
+            "genPlur": ["{R}ía"],
+            "insSing": ["{R}u"],
+            "insPlur": ["{R}úa"]
+          }
+        }
+      },
+      "2nd": {
+        "_comment": "Vocalic-stem class. {BASE}=stem with trailing -s stripped (if present), {STEMV}=the vowel immediately before a trailing -s, or the final letter otherwise.",
+        "shapes": {
+          "default": {
+            "nomSing": ["{STEM}"],
+            "nomPlur": ["{BASE}a", "{BASE}sa"],
+            "accSing": ["{BASE}"],
+            "accPlur": ["{BASE}{STEMV}n"],
+            "genSing": ["{BASE}i"],
+            "genPlur": ["{BASE}ya"],
+            "insSing": ["{BASE}u"],
+            "insPlur": ["{BASE}wa"]
+          }
+        }
+      }
+    }
+  },
+
+  "adjectives": {
+    "_comment": "Adjectives co-inflect with the noun they modify, using the SAME case-ending logic as 1st-class nouns. {GEM} is the gemination consonant (see nounClasses.1st.shapes.endsInConsonant.FINALCONS).",
+    "agreement": {
+      "nominativeSingular": ["{BASE}"],
+      "nominativePlural": ["{BASE}{GEM}a"],
+      "accusativeSingular": ["{BASE}{GEM}e"],
+      "accusativePlural": ["{STRIPPED}éa"],
+      "genitiveSingular": ["{BASE}i"],
+      "genitivePlural": ["{STRIPPED}ía"],
+      "instrumentalSingular": ["{BASE}u"],
+      "instrumentalPlural": ["{STRIPPED}úa"]
+    }
+  },
+
+  "properNouns": {
+    "_comment": "Inflection for proper names not found in the dictionary (pass-through handling). Plural forms only apply when explicitly marked plural by a quantifier or recognized English plural pattern (see properNounPluralPatterns below) — singular names ending in -s (e.g. 'Jonas') must NOT be treated as plural.",
+    "nominativeSingular": ["{NAME}"],
+    "nominativePlural": ["{NAME}a"],
+    "accusativeSingular": ["{NAME}e"],
+    "accusativePlural": ["{NAME}éa"],
+    "genitiveSingular": ["{NAME}i"],
+    "genitivePlural": ["{NAME}ía"],
+    "instrumentalSingular": ["{NAME}u"],
+    "instrumentalPlural": ["{NAME}úa"],
+    "englishPluralPatterns": [
+      "ans", "ons", "ians", "ers", "ens", "ites", "ists", "ids",
+      "ings", "ants", "ents", "ards", "ors", "ars", "ures", "dles",
+      "les", "nds", "rds", "lls", "nts", "sts", "fts", "rts", "ths"
+    ]
+  },
+
+  "verbs": {
+    "_comment": "Verb suffix paradigm. mode=direct|reflexive, time=past|present|future, aspect=simple|continuous|perfect. Each cell lists the canonical suffix first, then any recognized shorthand alternatives (used only for RECOGNITION on the Kestelál→English side, never generated).",
+    "stemPattern": "ár$|ar$",
+    "paradigm": {
+      "direct": {
+        "simple":     { "past": ["ór", "or"], "present": ["ár", "ar"], "future": ["ír", "ir"] },
+        "continuous": { "past": ["eró"],      "present": ["erá"],     "future": ["erí", "er"] },
+        "perfect":    { "past": ["ayó"],      "present": ["ayá"],     "future": ["ayí"] }
+      },
+      "reflexive": {
+        "simple":     { "past": ["aróth", "óth"], "present": ["aráth", "áth"], "future": ["aríth", "íth"] },
+        "continuous": { "past": ["eróth"], "present": ["eráth"], "future": ["eríth"] },
+        "perfect":    { "past": ["ayóth"], "present": ["ayáth"], "future": ["ayíth"] }
+      }
+    }
+  },
+
+  "prepositions": {
+    "_comment": "Which grammatical case each preposition/conjunction-as-preposition governs on the noun that follows it. Falls back to 'accusative' if a preposition's dictionary entry has no explicit _governsCase field and isn't listed here.",
+    "governsCase": {
+      "ke": "instrumental",
+      "eke": "instrumental",
+      "te": "instrumental",
+      "et": "instrumental"
+    },
+    "defaultGovernedCase": "accusative"
+  },
+
+  "quantifiers": {
+    "_comment": "English quantifier words that, when matched to a dictionary ADJ entry, behave as quantifier-adjectives: they co-inflect with the following noun's case/number rather than taking their own independent case.",
+    "words": ["all", "every", "each", "any", "no", "both", "either", "neither", "some"]
+  },
+
+  "articles": {
+    "_comment": "Which token types take an English definite article when rendering Kestelál→English. Proper names never take an article.",
+    "takesArticle": ["noun"],
+    "neverTakesArticle": ["name", "pronoun"]
+  },
+
+  "wordOrder": {
+    "_comment": "Kestelál clause order when generating from English. Each slot is emitted in this sequence; empty slots are skipped.",
+    "engToKes": ["subject", "genitive", "adjective", "object", "instrumental", "prepositionalGroup", "verb"],
+    "_note_prepositions": "Prepositions themselves are never emitted as separate words — their meaning is carried entirely by the case ending on the governed noun."
+  },
+
+  "irregularEnglishPastTense": {
+    "_comment": "English irregular past-tense forms mapped to their infinitive, used when recognizing English verbs during English→Kestelál translation (e.g. 'spoke' -> 'speak' -> subadár).",
+    "spoke": "speak", "spoken": "speak",
+    "ate": "eat", "eaten": "eat",
+    "did": "do", "done": "do",
+    "fell": "fall", "fallen": "fall",
+    "went": "go", "gone": "go",
+    "ran": "run",
+    "came": "come",
+    "saw": "see", "seen": "see",
+    "said": "say",
+    "gave": "give", "given": "give",
+    "took": "take", "taken": "take",
+    "made": "make",
+    "knew": "know", "known": "know",
+    "got": "get", "gotten": "get",
+    "thought": "think",
+    "brought": "bring",
+    "fought": "fight",
+    "taught": "teach",
+    "sought": "seek",
+    "bought": "buy",
+    "caught": "catch",
+    "held": "hold",
+    "kept": "keep",
+    "left": "leave",
+    "met": "meet",
+    "paid": "pay",
+    "put": "put",
+    "read": "read",
+    "sent": "send",
+    "stood": "stand",
+    "told": "tell",
+    "wrote": "write", "written": "write",
+    "was": "be", "were": "be", "been": "be",
+    "had": "have",
+    "began": "begin", "begun": "begin",
+    "broke": "break", "broken": "break",
+    "chose": "choose", "chosen": "choose",
+    "drew": "draw", "drawn": "draw",
+    "drove": "drive", "driven": "drive",
+    "drank": "drink", "drunk": "drink",
+    "flew": "fly", "flown": "fly",
+    "froze": "freeze", "frozen": "freeze",
+    "grew": "grow", "grown": "grow",
+    "hung": "hang",
+    "hid": "hide", "hidden": "hide",
+    "laid": "lay",
+    "led": "lead",
+    "lay": "lie",
+    "lost": "lose",
+    "rode": "ride", "ridden": "ride",
+    "rose": "rise", "risen": "rise",
+    "sat": "sit",
+    "slept": "sleep",
+    "slid": "slide",
+    "stole": "steal", "stolen": "steal",
+    "swam": "swim", "swum": "swim",
+    "threw": "throw", "thrown": "throw",
+    "understood": "understand",
+    "wore": "wear", "worn": "wear",
+    "won": "win"
+  }
+}
