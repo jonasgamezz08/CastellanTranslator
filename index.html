@@ -473,6 +473,7 @@ td {
   <button class="tab-btn" data-tab="gloss"><span class="tab-latin">Glossing & Analysis</span><span class="tab-script">Glossing & Analysis</span></button>
   <button class="tab-btn" data-tab="grammar"><span class="tab-latin">Grammar & Conjugation</span><span class="tab-script">Grammar & Conjugation</span></button>
   <button class="tab-btn" data-tab="dictionary"><span class="tab-latin">Dictionary</span><span class="tab-script">Dictionary</span></button>
+  <button class="tab-btn" data-tab="wants"><span class="tab-latin">Wants List</span><span class="tab-script">Wants List</span></button>
 </nav>
 
 <main>
@@ -530,6 +531,26 @@ td {
       </div>
     </div>
     <div id="dict-list" style="max-height:400px; overflow-y:auto;"></div>
+  </div>
+</div>
+
+<div id="tab-wants" class="panel">
+  <div class="card">
+    <div class="card-title">Unknown Words — Wants List</div>
+    <p style="color:var(--text-dim);font-style:italic;font-size:0.9rem;margin-bottom:1rem;">
+      Every word the translator could not find is logged here automatically, ranked by how often it appears.
+      Select the ones you want to export, then download them as a dictionary-ready JSON stub file.
+    </p>
+    <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem;">
+      <button class="btn" onclick="wantsSelectAll()">Select All</button>
+      <button class="btn" onclick="wantsSelectNone()">Deselect All</button>
+      <button class="btn" onclick="wantsExport()" id="wants-export-btn" style="background:var(--green-deep);border-color:var(--green-mid);">⬇ Export Selected as JSON</button>
+      <button class="btn" onclick="wantsClearAll()" style="background:rgba(180,40,40,0.15);border-color:rgba(180,40,40,0.35);color:#e08080;">✕ Clear All</button>
+      <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--amber);">
+        <span id="wants-count">0</span> words &nbsp;·&nbsp; <span id="wants-selected-count">0</span> selected
+      </span>
+    </div>
+    <div id="wants-list" style="max-height:460px;overflow-y:auto;"></div>
   </div>
 </div>
 
@@ -1011,13 +1032,15 @@ function switchVariant(compIdx, variantIdx) {
 function renderEngKesGloss(outputComponents, words) {
   const box = document.getElementById('translate-result');
 
-  // Rebuild finalOrder from updated components
+  // Rebuild finalOrder from updated components.
+  // IMPORTANT: prepGroups must be built FIRST, since it's the pass that marks
+  // `_inPrepGroup = true` on the nouns it claims — looseObjs/looseInstrumentals
+  // below depend on that flag already being set, or a noun ends up double-counted
+  // (once via prepGroups, once via the loose-* list) and gets emitted twice.
   let subjs = outputComponents.filter(c => c.role === "subject");
   let vbs   = outputComponents.filter(c => c.type === "verb");
   let adjs  = outputComponents.filter(c => c.type === "adjective");
-  let looseObjs = outputComponents.filter(c => c.role === "object" && !c._inPrepGroup && c.type !== "adjective");
   let genitives = outputComponents.filter(c => c.role === "genitive");
-  let looseInstrumentals = outputComponents.filter(c => c.role === "instrumental" && !c._inPrepGroup && c.type !== "adjective");
   let prepGroups = [];
   for (let idx = 0; idx < outputComponents.length; idx++) {
     if (outputComponents[idx].type === "preposition") {
@@ -1044,6 +1067,10 @@ function renderEngKesGloss(outputComponents, words) {
       }
     }
   }
+  // Now that _inPrepGroup is correctly set on every noun claimed by a preposition,
+  // it's safe to compute the "loose" (not-in-a-prep-group) object/instrumental lists.
+  let looseObjs = outputComponents.filter(c => c.role === "object" && !c._inPrepGroup && c.type !== "adjective");
+  let looseInstrumentals = outputComponents.filter(c => c.role === "instrumental" && !c._inPrepGroup && c.type !== "adjective");
 
   // Build finalOrder in Kestelál SOV word order.
   // Strategy: walk outputComponents in parse order, partitioning into slots,
@@ -1053,43 +1080,32 @@ function renderEngKesGloss(outputComponents, words) {
   let hasAnyContent = subjs.length > 0 || looseObjs.length > 0 || vbs.length > 0 || prepGroups.length > 0 || looseInstrumentals.length > 0;
 
   if (hasAnyContent) {
-    // Emit subjects (with any quantifier adjectives that precede them in parse order)
+    // Emit subjects (with any quantifier adjectives preceding them in parse order)
     subjs.forEach(s => {
-      // Find a quantifier adj that immediately precedes this noun in outputComponents
       let sIdx = outputComponents.indexOf(s);
+      // Quantifier adjective immediately preceding this noun in parse order
       if (sIdx > 0 && outputComponents[sIdx - 1].type === "adjective" && outputComponents[sIdx - 1]._isQuantifier) {
         finalOrder.push(outputComponents[sIdx - 1].word);
       }
       finalOrder.push(s.word);
+      // Predicate adjective describing this subject (e.g. "the god IS happy" →
+      // Tanát lirál tar — subject, then its adjective, then the copula verb)
+      let modAdj = outputComponents.find(c => c.type === "adjective" && !c._isQuantifier && c._modifiesIdx === sIdx);
+      if (modAdj) finalOrder.push(modAdj.word);
     });
     // Subject genitives
     genitives.filter(g => !g._inPrepGroup).forEach(g => finalOrder.push(g.word));
-    // Subject adjectives (non-quantifier)
-    outputComponents.filter(c => c.type === "adjective" && c._modifies === "subject" && !c._isQuantifier).forEach(a => finalOrder.push(a.word));
 
-    // Emit loose objects (with any quantifier adjectives preceding them)
+    // Emit loose objects (with any quantifier or attributive adjectives preceding them)
     looseObjs.forEach(o => {
       let oIdx = outputComponents.indexOf(o);
       if (oIdx > 0 && outputComponents[oIdx - 1].type === "adjective" && outputComponents[oIdx - 1]._isQuantifier) {
         finalOrder.push(outputComponents[oIdx - 1].word);
       }
-      // Non-quantifier adjectives modifying object
-      let objAdj = outputComponents.find(c => c.type === "adjective" && c._modifies === "object" && !c._isQuantifier);
-      if (objAdj) {
-        // Accusative inflect if needed
-        if (o.case === "accusative" && objAdj._entry) {
-          const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
-          const VOWELS = "aeiouáéíóú";
-          let base = objAdj._entry.k;
-          if (!VOWELS.includes(base[base.length - 1])) {
-            let lastCh = base[base.length - 1];
-            let finalCons = (base.length >= 2 && base[base.length - 2] === lastCh) ? '' : lastCh;
-            let stripped = base.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP[c]).split('').reverse().join('');
-            objAdj.word = base + finalCons + "e / " + stripped + "é";
-          } else { objAdj.word = base + "e"; }
-        }
-        finalOrder.push(objAdj.word);
-      }
+      // Adjective that specifically modifies THIS object (already fully inflected
+      // — case, gemination, plural — by post-process A2, so just emit its word)
+      let objAdj = outputComponents.find(c => c.type === "adjective" && !c._isQuantifier && c._modifiesIdx === oIdx);
+      if (objAdj) finalOrder.push(objAdj.word);
       finalOrder.push(o.word);
     });
 
@@ -1251,6 +1267,7 @@ function doTranslate() {
       } else {
         analyzedTokens.push({ type: "unknown", gloss: tok, base: tok, meanings: [tok], selectedMeaning: tok, meaningIdx: 0 });
         literalGlosser.push(`[${tok}]`);
+        wantsLog(tok, "kes");
       }
     });
 
@@ -1307,10 +1324,19 @@ function doTranslate() {
             prepPhrases.push(prepGloss + " " + nounGloss);
             skipNext = true;
           } else {
-            // Bare instrumental — render as "for X" (causation/time default)
+            // Bare instrumental pronoun (eu/au/yu/su/yau): the gloss already
+            // includes "with" (e.g. "with me"). Render a clickable toggle so the
+            // reader can switch between the two natural readings.
             let nounGloss = t.selectedMeaning;
             if (t.type === "noun") nounGloss = "the " + nounGloss;
-            prepPhrases.push("for " + nounGloss);
+            let isWithPron = t.type === "pronoun" && nounGloss.toLowerCase().startsWith("with ");
+            if (isWithPron) {
+              // Strip the leading "with " to get the bare pronoun gloss (e.g. "me")
+              let bare = nounGloss.slice(5);
+              prepPhrases.push(`<span class="ins-toggle" data-ins-with="with ${bare}" data-ins-for="for ${bare}" data-ins-state="with" style="cursor:pointer;border-bottom:1px dashed var(--amber);color:inherit;" title="Click to toggle for / with" onclick="kesToggleIns(this)">with ${bare}</span>`);
+            } else {
+              prepPhrases.push("for " + nounGloss);
+            }
           }
         } else {
           subjs.push(t);
@@ -1351,28 +1377,98 @@ function doTranslate() {
         let cleaned = baseEnglish.replace(/\bto\s+/gi,'').replace(/,\s*/g,'/');
         const getForms = (v) => {
           v = v.trim();
+          // Full irregular table — past/ppart/ing for every verb whose forms
+          // don't follow the regular +(e)d / +ing pattern.
           const irr = {
-            "be":    { "1sg": "am",  "1pl": "are", "2": "are", "3sg": "is",  "3pl": "are",
-                       past: "was/were", pastAgr: {"1sg":"was","1pl":"were","2":"were","3sg":"was","3pl":"were"},
-                       ing: "being", ppart: "been" },
-            "exist": { "1sg": "exist","1pl": "exist","2": "exist","3sg": "exists","3pl": "exist",
-                       past: "existed", ing: "existing", ppart: "existed" },
+            "be":         { "1sg":"am","1pl":"are","2":"are","3sg":"is","3pl":"are",
+                            past:"was/were", pastAgr:{"1sg":"was","1pl":"were","2":"were","3sg":"was","3pl":"were"},
+                            ing:"being", ppart:"been" },
+            "exist":      { "1sg":"exist","1pl":"exist","2":"exist","3sg":"exists","3pl":"exist",
+                            past:"existed", ing:"existing", ppart:"existed" },
+            "eat":        { past:"ate",      ing:"eating",     ppart:"eaten" },
+            "speak":      { past:"spoke",    ing:"speaking",   ppart:"spoken" },
+            "do":         { "3sg":"does", past:"did", ing:"doing", ppart:"done" },
+            "go":         { "3sg":"goes", past:"went", ing:"going", ppart:"gone" },
+            "fall":       { past:"fell",     ing:"falling",    ppart:"fallen" },
+            "run":        { past:"ran",      ing:"running",    ppart:"run" },
+            "come":       { past:"came",     ing:"coming",     ppart:"come" },
+            "see":        { past:"saw",      ing:"seeing",     ppart:"seen" },
+            "say":        { past:"said",     ing:"saying",     ppart:"said" },
+            "give":       { past:"gave",     ing:"giving",     ppart:"given" },
+            "take":       { past:"took",     ing:"taking",     ppart:"taken" },
+            "make":       { past:"made",     ing:"making",     ppart:"made" },
+            "know":       { past:"knew",     ing:"knowing",    ppart:"known" },
+            "get":        { past:"got",      ing:"getting",    ppart:"gotten" },
+            "think":      { past:"thought",  ing:"thinking",   ppart:"thought" },
+            "bring":      { past:"brought",  ing:"bringing",   ppart:"brought" },
+            "fight":      { past:"fought",   ing:"fighting",   ppart:"fought" },
+            "teach":      { past:"taught",   ing:"teaching",   ppart:"taught" },
+            "seek":       { past:"sought",   ing:"seeking",    ppart:"sought" },
+            "buy":        { past:"bought",   ing:"buying",     ppart:"bought" },
+            "catch":      { past:"caught",   ing:"catching",   ppart:"caught" },
+            "hold":       { past:"held",     ing:"holding",    ppart:"held" },
+            "keep":       { past:"kept",     ing:"keeping",    ppart:"kept" },
+            "leave":      { past:"left",     ing:"leaving",    ppart:"left" },
+            "meet":       { past:"met",      ing:"meeting",    ppart:"met" },
+            "pay":        { past:"paid",     ing:"paying",     ppart:"paid" },
+            "put":        { past:"put",      ing:"putting",    ppart:"put" },
+            "read":       { past:"read",     ing:"reading",    ppart:"read" },
+            "send":       { past:"sent",     ing:"sending",    ppart:"sent" },
+            "stand":      { past:"stood",    ing:"standing",   ppart:"stood" },
+            "tell":       { past:"told",     ing:"telling",    ppart:"told" },
+            "write":      { past:"wrote",    ing:"writing",    ppart:"written" },
+            "have":       { "3sg":"has", past:"had", ing:"having", ppart:"had" },
+            "begin":      { past:"began",    ing:"beginning",  ppart:"begun" },
+            "break":      { past:"broke",    ing:"breaking",   ppart:"broken" },
+            "choose":     { past:"chose",    ing:"choosing",   ppart:"chosen" },
+            "draw":       { past:"drew",     ing:"drawing",    ppart:"drawn" },
+            "drive":      { past:"drove",    ing:"driving",    ppart:"driven" },
+            "drink":      { past:"drank",    ing:"drinking",   ppart:"drunk" },
+            "fly":        { "3sg":"flies", past:"flew", ing:"flying", ppart:"flown" },
+            "freeze":     { past:"froze",    ing:"freezing",   ppart:"frozen" },
+            "grow":       { past:"grew",     ing:"growing",    ppart:"grown" },
+            "hang":       { past:"hung",     ing:"hanging",    ppart:"hung" },
+            "hide":       { past:"hid",      ing:"hiding",     ppart:"hidden" },
+            "lay":        { past:"laid",     ing:"laying",     ppart:"laid" },
+            "lead":       { past:"led",      ing:"leading",    ppart:"led" },
+            "lie":        { past:"lay",      ing:"lying",      ppart:"lain" },
+            "lose":       { past:"lost",     ing:"losing",     ppart:"lost" },
+            "ride":       { past:"rode",     ing:"riding",     ppart:"ridden" },
+            "rise":       { past:"rose",     ing:"rising",     ppart:"risen" },
+            "sit":        { past:"sat",      ing:"sitting",    ppart:"sat" },
+            "sleep":      { past:"slept",    ing:"sleeping",   ppart:"slept" },
+            "slide":      { past:"slid",     ing:"sliding",    ppart:"slid" },
+            "steal":      { past:"stole",    ing:"stealing",   ppart:"stolen" },
+            "swim":       { past:"swam",     ing:"swimming",   ppart:"swum" },
+            "throw":      { past:"threw",    ing:"throwing",   ppart:"thrown" },
+            "understand": { past:"understood",ing:"understanding",ppart:"understood" },
+            "wear":       { past:"wore",     ing:"wearing",    ppart:"worn" },
+            "win":        { past:"won",      ing:"winning",    ppart:"won" },
+            "descend":    { past:"descended",ing:"descending", ppart:"descended" },
+            "collapse":   { past:"collapsed",ing:"collapsing", ppart:"collapsed" },
+            "succumb":    { past:"succumbed",ing:"succumbing", ppart:"succumbed" },
+            "protect":    { past:"protected",ing:"protecting", ppart:"protected" },
+            "guard":      { past:"guarded",  ing:"guarding",   ppart:"guarded" },
+            "assist":     { past:"assisted", ing:"assisting",  ppart:"assisted" },
+            "converse":   { past:"conversed",ing:"conversing", ppart:"conversed" },
           };
+          // Regular-verb fallback shapes (reused for irregulars missing a present entry)
+          let _reg3sg  = (v.endsWith('s')||v.endsWith('sh')||v.endsWith('ch')||v.endsWith('x')||v.endsWith('z')) ? v+"es" : v+"s";
+          let _regPres = (person === "3sg") ? _reg3sg : v;
+          let _regPast = v.endsWith('e') ? v+"d" : v+"ed";
+          let _regIng  = v.endsWith('e') ? v.slice(0,-1)+"ing" : v+"ing";
           if (irr[v]) {
             let f = irr[v];
+            let irr3sg  = f["3sg"] || _reg3sg;
+            let irrPres = f[person] || (person === "3sg" ? irr3sg : v);
             return {
-              pres:  f[person] || f["3sg"],
-              past:  time === "past" && f.pastAgr ? (f.pastAgr[person] || f.past) : f.past,
-              ing:   f.ing,
-              ppart: f.ppart
+              pres:  irrPres,
+              past:  time === "past" && f.pastAgr ? (f.pastAgr[person] || f.past) : (f.past  || _regPast),
+              ing:   f.ing   || _regIng,
+              ppart: f.ppart || f.past || _regPast
             };
           }
-          // Regular verb
-          let pres3sg = (v.endsWith('s')||v.endsWith('sh')||v.endsWith('ch')||v.endsWith('x')||v.endsWith('z')) ? v+"es" : v+"s";
-          let pres = (person === "3sg") ? pres3sg : v;
-          let past = v.endsWith('e') ? v+"d" : v+"ed";
-          let ing  = v.endsWith('e') ? v.slice(0,-1)+"ing" : v+"ing";
-          return { pres, past, ing, ppart: past };
+          return { pres: _regPres, past: _regPast, ing: _regIng, ppart: _regPast };
         };
         let parts = cleaned.split('/').map(p=>p.trim()).filter(p=>!SKIP_PARTS.has(p));
         if (parts.length === 0) parts = ["be"];
@@ -1478,6 +1574,38 @@ function doTranslate() {
     let nextIsInstrumental = false;
     let isEnglishPlural = false; // persists across iterations so quantifiers like "all" propagate
     let quantifierPluralPending = false; // set by "all"/"every"/"each", consumed by next noun
+
+    // Resolves a verb chain token (e.g. "-ing" or past-participle form) to a
+    // dictionary entry by progressively stripping verb endings. Defined here so
+    // it is a proper function expression in scope for the entire while loop below.
+    const resolveVerbToken = (vt) => {
+      let direct = findWordByEnglishPhrase(vt, "VERB");
+      if (direct) return direct;
+      if (vt.endsWith("ying")) { let r = findWordByEnglishPhrase(vt.slice(0,-4)+"y","VERB"); if(r) return r; }
+      if (vt.endsWith("ing"))  {
+        let r = findWordByEnglishPhrase(vt.slice(0,-3),"VERB");       if(r) return r;
+            r = findWordByEnglishPhrase(vt.slice(0,-3)+"e","VERB");   if(r) return r;
+      }
+      const PART_MAP = {
+        "spoken":"speak","eaten":"eat","fallen":"fall","taken":"take","given":"give",
+        "driven":"drive","written":"write","risen":"rise","chosen":"choose","broken":"break",
+        "frozen":"freeze","stolen":"steal","drawn":"draw","grown":"grow","known":"know",
+        "shown":"show","thrown":"throw","worn":"wear","torn":"tear","sworn":"swear",
+        "flown":"fly","blown":"blow","hidden":"hide","ridden":"ride",
+        "gotten":"get","forgotten":"forget","beaten":"beat","seen":"see","been":"be",
+        "done":"do","gone":"go","run":"run","come":"come","won":"win","begun":"begin",
+        "drunk":"drink","swum":"swim","sung":"sing","rung":"ring","sprung":"spring",
+        "shrunk":"shrink","sunk":"sink","stunk":"stink","spun":"spin","clung":"cling",
+        "flung":"fling","swung":"swing","stung":"sting","wrung":"wring"
+      };
+      if (PART_MAP[vt]) { let r = findWordByEnglishPhrase(PART_MAP[vt],"VERB"); if(r) return r; }
+      if (vt.endsWith("ied")) { let r = findWordByEnglishPhrase(vt.slice(0,-3)+"y","VERB"); if(r) return r; }
+      if (vt.endsWith("ed"))  {
+        let r = findWordByEnglishPhrase(vt.slice(0,-2),"VERB");   if(r) return r;
+            r = findWordByEnglishPhrase(vt.slice(0,-1),"VERB");   if(r) return r;
+      }
+      return null;
+    };
 
     while (i < words.length) {
       let token = words[i];
@@ -1624,7 +1752,7 @@ function doTranslate() {
         } else {
           // Future simple copula: "will be" → tir
           hasVerb = true;
-          outputComponents.push({ type: "verb", word: "tir", _engSource: "will be" });
+          outputComponents.push({ type: "verb", word: "tir", _engSource: "will be", _isCopula: true });
           i += 2;
           continue;
         }
@@ -1639,7 +1767,7 @@ function doTranslate() {
           clauseTime = "present"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
         } else {
           hasVerb = true;
-          outputComponents.push({ type: "verb", word: "tar", _engSource: token });
+          outputComponents.push({ type: "verb", word: "tar", _engSource: token, _isCopula: true });
           i++;
           continue;
         }
@@ -1648,7 +1776,7 @@ function doTranslate() {
           clauseTime = "past"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
         } else {
           hasVerb = true;
-          outputComponents.push({ type: "verb", word: "tor", _engSource: token });
+          outputComponents.push({ type: "verb", word: "tor", _engSource: token, _isCopula: true });
           i++;
           continue;
         }
@@ -1659,7 +1787,7 @@ function doTranslate() {
         if (nextIdx < words.length && ["myself", "yourself", "himself", "herself", "itself", "ourselves", "themselves"].includes(words[nextIdx])) {
           clauseReflexive = true; skipCount++;
         }
-        let baseVerb = findWordByEnglishPhrase(verbToken, "VERB");
+        let baseVerb = resolveVerbToken(verbToken);
         if (baseVerb) {
           hasVerb = true;
           let stem = baseVerb.k.replace(/ár$|ar$/, '');
@@ -1718,14 +1846,26 @@ function doTranslate() {
 
         if (matchedEntry.t === "PRON") {
           let finalPron = matchedEntry.k;
-          // Force accusative if preceded by a preposition
           let precededByPrep = outputComponents.length > 0 && outputComponents[outputComponents.length - 1].type === "preposition";
-          if (role === "object" || precededByPrep) {
+          let prepComp = precededByPrep ? outputComponents[outputComponents.length - 1] : null;
+          let prepGoverns = prepComp ? (prepComp._governsCase || "accusative") : null;
+          let assignedCase = matchedEntry.case || "nominative";
+
+          if (nextIsInstrumental || (precededByPrep && prepGoverns === "instrumental")) {
+            // Instrumental preposition (ke/eke/with): find the instrumental form of this pronoun
+            let insForm = CORE_DICT.find(x => x.t === "PRON" && x.case === "instrumental" && x.num === (matchedEntry.num || "singular") &&
+              x.e.toLowerCase().split(/[,;]+/).map(s=>s.trim()).some(gl => matchedEntry.e.toLowerCase().split(/[,;]+/).map(s=>s.trim()).some(me => me === gl || gl.endsWith(me))));
+            if (insForm) finalPron = insForm.k;
+            role = "instrumental";
+            assignedCase = "instrumental";
+            nextIsInstrumental = false;
+          } else if (role === "object" || precededByPrep) {
             let accForm = CORE_DICT.find(x => x.t === "PRON" && x.e.toLowerCase() === matchedEntry.e.toLowerCase() && x.case === "accusative");
             if (accForm) finalPron = accForm.k;
             role = "object";
+            assignedCase = "accusative";
           }
-          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: (role === "object" || precededByPrep) ? "accusative" : matchedEntry.case || "nominative", _entry: matchedEntry, _inflectParams: { type: "pronoun", role }, _engSource: words.slice(i, i + matchLength).join(" ") });
+          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: assignedCase, _entry: matchedEntry, _inflectParams: { type: "pronoun", role }, _engSource: words.slice(i, i + matchLength).join(" ") });
           nextIsIndefinite = false;
           nextIsDefinite = false;
           nextIsGenitive = false;
@@ -1823,7 +1963,11 @@ function doTranslate() {
                        token.endsWith("ed") || token.endsWith("ied") ||
                        KNOWN_PAST_FORMS_V.has(token);
           let suffix = isPast ? "ór" : clauseTime === "future" ? "ír" : "ár";
-          outputComponents.push({ type: "verb", word: stem + suffix, _entry: matchedEntry, _inflectParams: { type: "verb", suffix }, _engSource: words.slice(i, i + matchLength).join(" ") });
+          // The copula verb ("tar" = be/exist) takes a predicate adjective that
+          // describes the SUBJECT, never an object — flag it so the adjective
+          // branch below can tell the difference from a transitive verb.
+          let isCopulaEntry = matchedEntry.k.toLowerCase() === "tar";
+          outputComponents.push({ type: "verb", word: stem + suffix, _entry: matchedEntry, _inflectParams: { type: "verb", suffix }, _engSource: words.slice(i, i + matchLength).join(" "), _isCopula: isCopulaEntry });
         } else if (matchedEntry.t === "ADJ") {
           // ── Quantifier intercept for ADJ-type entries (e.g. gol = "all") ──────
           // These act as quantifier adjectives that co-inflect with the following noun.
@@ -1847,30 +1991,21 @@ function doTranslate() {
             continue;
           }
           // ── End quantifier intercept ─────────────────────────────────────────
-          const ACCENT_MAP_ADJ = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
-          function stripAdjAccent(s) {
-            return s.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP_ADJ[c]).split('').reverse().join('');
-          }
-          const ADJ_VOWELS = "aeiouáéíóú";
           let adjBase = matchedEntry.k;
-          let adjPlural;
-          let subjectIsPlural = outputComponents.some(c =>
-            c.role === "subject" && (
-              c.num === "plural" ||
-              (c.type === "noun" && c.word && (c.word.endsWith("a") || c.word.includes("/")))
-            )
-          ) || isEnglishPlural;
-          if (subjectIsPlural && !ADJ_VOWELS.includes(adjBase[adjBase.length - 1])) {
-            let lastCh = adjBase[adjBase.length - 1];
-            let finalCons = (adjBase.length >= 2 && adjBase[adjBase.length - 2] === lastCh) ? '' : lastCh;
-            let stripped = stripAdjAccent(adjBase);
-            adjPlural = `${adjBase}${finalCons}a / ${stripped}á`;
-          } else if (subjectIsPlural) {
-            adjPlural = adjBase + "a";
-          } else {
-            adjPlural = adjBase;
-          }
-          outputComponents.push({ type: "adjective", word: subjectIsPlural ? adjPlural : adjBase, _entry: matchedEntry, _inflectParams: { type: "adj", subjectIsPlural }, _modifies: hasVerb ? "object" : "subject", _engSource: words.slice(i, i + matchLength).join(" ") });
+          // Defer everything about this adjective's agreement to a post-processing
+          // pass (mirrors the quantifier-adjective pattern below). At this point in
+          // the token stream we may not yet know which noun follows — "happy" in
+          // "the happy person" attaches to "person", not to whatever came before —
+          // so guessing _modifies from hasVerb/copula state here was unreliable
+          // whenever an adjective sits directly in front of an object/predicate noun.
+          outputComponents.push({
+            type: "adjective",
+            word: adjBase,
+            _entry: matchedEntry,
+            _inflectParams: { type: "adj" },
+            _adjPending: true,
+            _engSource: words.slice(i, i + matchLength).join(" ")
+          });
         } else if (matchedEntry.t === "PREP" || (matchedEntry.t === "CONJ" && matchedEntry._governsCase)) {
           // Determine which case this preposition/conjunction governs.
           // Priority: explicit _governsCase field on the dict entry.
@@ -1996,7 +2131,7 @@ function doTranslate() {
         }
       }
 
-      if (token !== "/") outputComponents.push({ type: "unknown", word: `[${token}]` });
+      if (token !== "/") { outputComponents.push({ type: "unknown", word: `[${token}]` }); wantsLog(token, "eng"); }
       isEnglishPlural = false; quantifierPluralPending = false;
       i++;
     }
@@ -2058,6 +2193,76 @@ function doTranslate() {
       comp.num = isPlural ? "plural" : "singular";
       comp._quantifierPending = false;
       comp.role = nextNoun.role; // same syntactic role as the noun it modifies
+    }
+
+    // Post-process A2: co-inflect ordinary (non-quantifier) pending adjectives with
+    // whichever noun they actually describe. Strategy: look FORWARD first for the
+    // nearest noun/name/pronoun (covers attributive adjectives like "the happy
+    // person", where the adjective precedes its noun and must agree with IT, not
+    // with whatever came earlier in the sentence). If nothing suitable follows
+    // (a true predicate-adjective construction like "the god is happy", where the
+    // adjective is the last thing in the clause), fall back to the nearest
+    // PRECEDING noun/name/pronoun instead — that's the subject the adjective
+    // actually describes via the copula.
+    for (let idx = 0; idx < outputComponents.length; idx++) {
+      let comp = outputComponents[idx];
+      if (!comp._adjPending) continue;
+
+      let targetNoun = null;
+      for (let j = idx + 1; j < outputComponents.length; j++) {
+        let c = outputComponents[j];
+        if (c.type === "verb") break; // a verb boundary means no noun ahead in this clause
+        if (c.type === "noun" || c.type === "name" || c.type === "pronoun") { targetNoun = c; break; }
+      }
+      if (!targetNoun) {
+        for (let j = idx - 1; j >= 0; j--) {
+          let c = outputComponents[j];
+          if (c.type === "noun" || c.type === "name" || c.type === "pronoun") { targetNoun = c; break; }
+        }
+      }
+      if (!targetNoun) { comp._adjPending = false; continue; }
+
+      let entry = comp._entry;
+      let isPlural = targetNoun.num === "plural";
+      let targetCase = targetNoun.case || "nominative";
+      let base = entry ? entry.k : comp.word;
+      const ADJ_VOWELS2 = "aeiouáéíóú";
+      const ACCENT_MAP_ADJ2 = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
+      function stripAccAdj2(s) { return s.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP_ADJ2[c]).split('').reverse().join(''); }
+      let lastCh = base[base.length - 1];
+      let consFinal = !ADJ_VOWELS2.includes(lastCh);
+      let gem = consFinal ? ((base.length >= 2 && base[base.length - 2] === lastCh) ? '' : lastCh) : '';
+      let stripped = stripAccAdj2(base);
+      let inflected;
+
+      if (targetCase === "instrumental") {
+        inflected = isPlural ? (consFinal ? stripped + "úa" : base + "úa") : (base + "u");
+      } else if (targetCase === "genitive") {
+        inflected = isPlural ? (consFinal ? stripped + "ía" : base + "ía") : (base + "i");
+      } else if (targetCase === "accusative") {
+        // Singular consonant-final adjectives have two valid forms, same as nouns:
+        // the geminated form (lirál + l + e = "lirálle") and the accent-stripped
+        // form (stripped lirál = "liral" + é = "liralé"). Both are correct; the
+        // primary (first) form is used in the synthesized sentence.
+        inflected = isPlural
+          ? (consFinal ? stripped + "éa" : base + "éa")
+          : (consFinal ? `${base}${gem}e / ${stripped}é` : base + "e");
+      } else {
+        // nominative
+        inflected = isPlural ? (consFinal ? base + gem + "a" : base + "a") : base;
+      }
+
+      // The synthesized sentence should only use the PRIMARY form, even though
+      // the gloss card may want to show both alternatives (split on " / " below).
+      let primaryForm = inflected.includes(" / ") ? inflected.split(" / ")[0] : inflected;
+
+      comp.word = primaryForm;
+      comp._allForms = inflected; // retains "form1 / form2" for display if needed
+      comp.case = targetCase;
+      comp.num = isPlural ? "plural" : "singular";
+      comp._modifies = targetNoun.role || "subject";
+      comp._modifiesIdx = outputComponents.indexOf(targetNoun); // which exact noun, for word-order placement
+      comp._adjPending = false;
     }
 
     // Post-process B: nouns following a preposition get inflected to the case the preposition governs.
@@ -2122,69 +2327,11 @@ function doTranslate() {
       }
     }
 
-    let finalOrder = [];
-    let subjs = outputComponents.filter(c => c.role === "subject");
-    let vbs = outputComponents.filter(c => c.type === "verb");
-    let adjs = outputComponents.filter(c => c.type === "adjective");
-    // Build preposition groups: [prep, noun] pairs or bare instrumentals (Kestelál SOV order: noun before verb)
-    let prepGroups = [];
-    for (let idx = 0; idx < outputComponents.length; idx++) {
-      if (outputComponents[idx].type === "preposition") {
-        let prep = outputComponents[idx];
-        let next = outputComponents[idx + 1];
-        // Skip quantifier adjectives to find governed noun
-        let nounNext = (next && next._isQuantifier) ? outputComponents[idx + 2] : next;
-        if (nounNext && (nounNext.type === "noun" || nounNext.type === "name" || nounNext.type === "pronoun") &&
-            (nounNext.role === "object" || nounNext.role === "instrumental")) {
-          nounNext._inPrepGroup = true;
-          if (next && next._isQuantifier) {
-            prepGroups.push([prep.word, next.word, nounNext.word]);
-          } else {
-            prepGroups.push([prep.word, nounNext.word]);
-          }
-        } else {
-          prepGroups.push([prep.word]);
-        }
-      }
-    }
-    let looseObjs = outputComponents.filter(c => c.role === "object" && !c._inPrepGroup && c.type !== "adjective");
-    let looseInstrumentals = outputComponents.filter(c => c.role === "instrumental" && !c._inPrepGroup && c.type !== "adjective");
-    let looseGenitives = outputComponents.filter(c => c.role === "genitive");
-
-    if (subjs.length > 0 || looseObjs.length > 0 || vbs.length > 0 || prepGroups.length > 0 || looseInstrumentals.length > 0) {
-      // Kestelál word order: Subject [Genitive] [Adj/Quantifier+Noun] [Object] [Instrumental] [PrepGroups] Verb
-      // Quantifier adjectives immediately precede their noun, so we interleave them.
-      subjs.forEach(s => {
-        let sIdx = outputComponents.indexOf(s);
-        if (sIdx > 0 && outputComponents[sIdx - 1].type === "adjective" && outputComponents[sIdx - 1]._isQuantifier) {
-          finalOrder.push(outputComponents[sIdx - 1].word);
-        }
-        finalOrder.push(s.word);
-      });
-      looseGenitives.forEach(g => finalOrder.push(g.word));
-      // Non-quantifier adjectives
-      adjs.filter(a => !a._isQuantifier).forEach(a => finalOrder.push(a.word));
-      looseObjs.forEach(o => {
-        let oIdx = outputComponents.indexOf(o);
-        if (oIdx > 0 && outputComponents[oIdx - 1].type === "adjective" && outputComponents[oIdx - 1]._isQuantifier) {
-          finalOrder.push(outputComponents[oIdx - 1].word);
-        }
-        finalOrder.push(o.word);
-      });
-      looseInstrumentals.forEach(ins => {
-        let iIdx = outputComponents.indexOf(ins);
-        if (iIdx > 0 && outputComponents[iIdx - 1].type === "adjective" && outputComponents[iIdx - 1]._isQuantifier) {
-          finalOrder.push(outputComponents[iIdx - 1].word);
-        }
-        finalOrder.push(ins.word);
-      });
-      prepGroups.forEach(g => {
-        for (let gi = 1; gi < g.length; gi++) finalOrder.push(g[gi]);
-      });
-      vbs.forEach(v => finalOrder.push(v.word));
-    } else {
-      outputComponents.forEach(c => finalOrder.push(c.word));
-    }
+    // NOTE: word-order assembly (subject/object/adjective placement, prepGroups,
+    // etc.) happens entirely inside renderEngKesGloss() below, which is the single
+    // source of truth for finalOrder/translationText. An earlier duplicate
+    // finalOrder build used to live here but was dead code — its result was never
+    // read — so it has been removed to avoid the two copies drifting out of sync.
 
     window._lastOutputComponents = outputComponents;
 
@@ -2513,6 +2660,67 @@ document.getElementById('dict-search').addEventListener('input', renderDict);
 document.addEventListener('DOMContentLoaded', () => {
   initializeDataLayer();
 });
+
+// ── Instrumental toggle (kes→eng fluid translation) ───────────────────────────
+// Called by clicking a bare instrumental pronoun in the Final Translation line.
+function kesToggleIns(el) {
+  let state = el.dataset.insState === "with" ? "for" : "with";
+  el.dataset.insState = state;
+  el.textContent = state === "with" ? el.dataset.insWith : el.dataset.insFor;
+}
+
+// ── Wants Tracker ──────────────────────────────────────────────────────────────
+const WANTS_KEY = "kestelalWants";
+function wantsLoad() { try { return JSON.parse(localStorage.getItem(WANTS_KEY)||"{}"); } catch { return {}; } }
+function wantsSave(d) { try { localStorage.setItem(WANTS_KEY,JSON.stringify(d)); } catch {} }
+function wantsLog(rawWord, dir) {
+  let word = rawWord.toLowerCase().replace(/^\[|\]$/g,"").replace(/[.,!?;:'"]/g,"").trim();
+  if (!word || word.length < 2) return;
+  let data = wantsLoad();
+  if (data[word]) { data[word].count++; data[word].last=Date.now(); if(data[word].dir!==dir) data[word].dir="both"; }
+  else data[word] = { word, dir, count:1, last:Date.now() };
+  wantsSave(data);
+  if (document.getElementById("tab-wants")?.classList.contains("active")) renderWants();
+}
+function wantsRanked() { return Object.values(wantsLoad()).sort((a,b)=>b.count-a.count||a.word.localeCompare(b.word)); }
+function renderWants() {
+  let list = wantsRanked();
+  let ce=document.getElementById("wants-count"), se=document.getElementById("wants-selected-count"), le=document.getElementById("wants-list");
+  if(!le) return;
+  if(ce) ce.textContent=list.length;
+  if(!list.length){ le.innerHTML=`<p style="color:var(--text-muted);font-style:italic;padding:0.5rem 0;">No unknown words logged yet. Try translating something!</p>`; if(se) se.textContent="0"; return; }
+  le.innerHTML=list.map((item,idx)=>{
+    let dir=item.dir==="eng"?`<span style="color:var(--amber);font-size:0.7rem;">ENG→KES</span>`:item.dir==="kes"?`<span style="color:var(--green-glow);font-size:0.7rem;">KES→ENG</span>`:`<span style="color:var(--gold);font-size:0.7rem;">BOTH</span>`;
+    let ago=wantsTimeAgo(item.last);
+    return `<div class="dict-entry" style="display:flex;align-items:center;gap:0.75rem;cursor:default;">
+      <input type="checkbox" id="wants-cb-${idx}" data-word="${encodeURIComponent(item.word)}" style="width:1rem;height:1rem;accent-color:var(--green-bright);cursor:pointer;flex-shrink:0;" onchange="wantsUpdateSelectedCount()">
+      <div style="flex:1;min-width:0;"><span class="de-word" style="font-size:1rem;">${item.word}</span></div>
+      ${dir}
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--amber);background:rgba(200,146,42,0.1);padding:2px 7px;border-radius:3px;flex-shrink:0;">×${item.count}</span>
+      <span style="font-size:0.72rem;color:var(--text-muted);flex-shrink:0;">${ago}</span>
+      <button onclick="wantsDelete('${encodeURIComponent(item.word)}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.85rem;flex-shrink:0;padding:0 0.2rem;line-height:1;" title="Remove" onmouseover="this.style.color='#e08080'" onmouseout="this.style.color='var(--text-muted)'">✕</button>
+    </div>`;
+  }).join("");
+  wantsUpdateSelectedCount();
+}
+function wantsUpdateSelectedCount(){ let n=document.querySelectorAll("#wants-list input:checked").length; let e=document.getElementById("wants-selected-count"); if(e) e.textContent=n; }
+function wantsSelectAll(){ document.querySelectorAll("#wants-list input[type=checkbox]").forEach(cb=>cb.checked=true); wantsUpdateSelectedCount(); }
+function wantsSelectNone(){ document.querySelectorAll("#wants-list input[type=checkbox]").forEach(cb=>cb.checked=false); wantsUpdateSelectedCount(); }
+function wantsDelete(enc){ let w=decodeURIComponent(enc); let d=wantsLoad(); delete d[w]; wantsSave(d); renderWants(); }
+function wantsClearAll(){ if(!confirm("Clear the entire Wants list?")) return; wantsSave({}); renderWants(); }
+function wantsExport(){
+  let cbs=document.querySelectorAll("#wants-list input[type=checkbox]:checked");
+  if(!cbs.length){ alert("Select at least one word to export."); return; }
+  let data=wantsLoad(), entries=[];
+  cbs.forEach(cb=>{ let w=decodeURIComponent(cb.dataset.word); let item=data[w]; if(!item) return;
+    entries.push(item.dir==="kes" ? {k:w,t:"",e:"",cls:""} : {k:"",t:"",e:w,cls:""}); });
+  let blob=new Blob([JSON.stringify(entries,null,2)],{type:"application/json"});
+  let url=URL.createObjectURL(blob);
+  let a=document.createElement("a"); a.href=url; a.download=`kestetal-wants-${new Date().toISOString().slice(0,10)}.json`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),5000);
+}
+function wantsTimeAgo(ts){ let d=Date.now()-ts,m=Math.floor(d/60000); if(m<1) return"just now"; if(m<60) return m+"m ago"; let h=Math.floor(m/60); if(h<24) return h+"h ago"; return Math.floor(h/24)+"d ago"; }
+document.querySelectorAll('.tab-btn').forEach(btn=>{ if(btn.getAttribute('data-tab')==='wants') btn.addEventListener('click',renderWants); });
 </script>
 </body>
 </html>
