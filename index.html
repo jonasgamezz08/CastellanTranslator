@@ -887,6 +887,18 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
     // Exact base form
     if (cl === base) return { type: "adjective", base: x.k, gloss: x.e, num: "singular", meta: `Number: singular` };
 
+    // Genitive singular: base+i  /  Instrumental singular: base+u
+    // (Same formula for both consonant- and vowel-final adjectives — mirrors
+    // the eng→kes generator's Post-process A/A2, which always produces
+    // base+"i"/base+"u" for singular genitive/instrumental regardless of the
+    // adjective's final sound. These were previously unrecognized here, so a
+    // generated form like "atálu" would round-trip back as an unrecognized
+    // word instead of "tall".)
+    if (cl === base + "i")
+      return { type: "adjective", base: x.k, gloss: x.e, num: "singular", meta: `Number: singular (genitive)` };
+    if (cl === base + "u")
+      return { type: "adjective", base: x.k, gloss: x.e, num: "singular", meta: `Number: singular (instrumental)` };
+
     if (consFinal) {
       // Nominative plural: doubled+a  or  stripped+á
       if (cl === base + gem + "a" || cl === stripped + "á")
@@ -1037,10 +1049,19 @@ function renderEngKesGloss(outputComponents, words) {
   // `_inPrepGroup = true` on the nouns it claims — looseObjs/looseInstrumentals
   // below depend on that flag already being set, or a noun ends up double-counted
   // (once via prepGroups, once via the loose-* list) and gets emitted twice.
-  let subjs = outputComponents.filter(c => c.role === "subject");
+  //
+  // NOTE: role gets copied from a noun onto its resolved quantifier adjective
+  // (see Post-process A below: "comp.role = nextNoun.role"), so filtering by
+  // role ALONE would also catch the quantifier component itself here — it
+  // would then be emitted once as its own "subject", and a second time when
+  // the noun's own turn comes around and looks behind for a preceding
+  // quantifier to prefix. Excluding type "adjective" (mirroring the guard
+  // looseObjs/looseInstrumentals already had) keeps these lists to actual
+  // noun/pronoun/name heads only.
+  let subjs = outputComponents.filter(c => c.role === "subject" && c.type !== "adjective");
   let vbs   = outputComponents.filter(c => c.type === "verb");
   let adjs  = outputComponents.filter(c => c.type === "adjective");
-  let genitives = outputComponents.filter(c => c.role === "genitive");
+  let genitives = outputComponents.filter(c => c.role === "genitive" && c.type !== "adjective");
   let prepGroups = [];
   for (let idx = 0; idx < outputComponents.length; idx++) {
     if (outputComponents[idx].type === "preposition") {
@@ -1080,41 +1101,58 @@ function renderEngKesGloss(outputComponents, words) {
   let hasAnyContent = subjs.length > 0 || looseObjs.length > 0 || vbs.length > 0 || prepGroups.length > 0 || looseInstrumentals.length > 0;
 
   if (hasAnyContent) {
-    // Emit subjects (with any quantifier adjectives preceding them in parse order)
+    // Emit subjects (with any quantifier adjective(s) that modify them)
     subjs.forEach(s => {
       let sIdx = outputComponents.indexOf(s);
-      // Quantifier adjective immediately preceding this noun in parse order
-      if (sIdx > 0 && outputComponents[sIdx - 1].type === "adjective" && outputComponents[sIdx - 1]._isQuantifier) {
-        finalOrder.push(outputComponents[sIdx - 1].word);
-      }
+      // Quantifier adjective linked to this noun via _modifiesIdx (set in
+      // Post-process A). Looking this up directly, rather than only checking
+      // the immediately preceding token, is what lets "all TALL sons" still
+      // find "all" even though an ordinary adjective now sits between them.
+      let quantAdjs = outputComponents.filter(c => c.type === "adjective" && c._isQuantifier && c._modifiesIdx === sIdx);
+      quantAdjs.forEach(a => finalOrder.push(a.word));
       finalOrder.push(s.word);
-      // Predicate adjective describing this subject (e.g. "the god IS happy" →
-      // Tanát lirál tar — subject, then its adjective, then the copula verb)
-      let modAdj = outputComponents.find(c => c.type === "adjective" && !c._isQuantifier && c._modifiesIdx === sIdx);
-      if (modAdj) finalOrder.push(modAdj.word);
+      // Predicate/attributive adjective(s) describing this subject (e.g. "the
+      // god IS happy" → Tanát lirál tar — subject, then its adjective, then
+      // the copula verb). Use filter (not find) so a stacked run like "the
+      // big tall son" emits BOTH adjectives instead of only the first match.
+      let modAdjs = outputComponents.filter(c => c.type === "adjective" && !c._isQuantifier && c._modifiesIdx === sIdx);
+      modAdjs.forEach(a => finalOrder.push(a.word));
     });
-    // Subject genitives
-    genitives.filter(g => !g._inPrepGroup).forEach(g => finalOrder.push(g.word));
+    // Subject genitives (with any adjective(s) that modify them)
+    genitives.filter(g => !g._inPrepGroup).forEach(g => {
+      let gIdx = outputComponents.indexOf(g);
+      let quantAdjs = outputComponents.filter(c => c.type === "adjective" && c._isQuantifier && c._modifiesIdx === gIdx);
+      quantAdjs.forEach(a => finalOrder.push(a.word));
+      let genAdjs = outputComponents.filter(c => c.type === "adjective" && !c._isQuantifier && c._modifiesIdx === gIdx);
+      genAdjs.forEach(a => finalOrder.push(a.word));
+      finalOrder.push(g.word);
+    });
 
-    // Emit loose objects (with any quantifier or attributive adjectives preceding them)
+    // Emit loose objects (with any quantifier or attributive adjectives linked to them)
     looseObjs.forEach(o => {
       let oIdx = outputComponents.indexOf(o);
-      if (oIdx > 0 && outputComponents[oIdx - 1].type === "adjective" && outputComponents[oIdx - 1]._isQuantifier) {
-        finalOrder.push(outputComponents[oIdx - 1].word);
-      }
-      // Adjective that specifically modifies THIS object (already fully inflected
-      // — case, gemination, plural — by post-process A2, so just emit its word)
-      let objAdj = outputComponents.find(c => c.type === "adjective" && !c._isQuantifier && c._modifiesIdx === oIdx);
-      if (objAdj) finalOrder.push(objAdj.word);
+      let quantAdjs = outputComponents.filter(c => c.type === "adjective" && c._isQuantifier && c._modifiesIdx === oIdx);
+      quantAdjs.forEach(a => finalOrder.push(a.word));
+      // Adjective(s) that specifically modify THIS object (already fully
+      // inflected — case, gemination, plural — by post-process A2, so just
+      // emit their words). filter, not find, so multiple stacked adjectives
+      // ("the big tall son" as an object) all make it through.
+      let objAdjs = outputComponents.filter(c => c.type === "adjective" && !c._isQuantifier && c._modifiesIdx === oIdx);
+      objAdjs.forEach(a => finalOrder.push(a.word));
       finalOrder.push(o.word);
     });
 
-    // Emit loose instrumentals (with any quantifier adjectives preceding them)
+    // Emit loose instrumentals (with any quantifier or attributive adjectives
+    // linked to them). This mirrors the subject/object handling above — it
+    // was previously missing the attributive-adjective lookup entirely, which
+    // silently dropped adjectives on instrumental phrases (e.g. "I speak with
+    // the TALL son" lost "tall").
     looseInstrumentals.forEach(ins => {
       let iIdx = outputComponents.indexOf(ins);
-      if (iIdx > 0 && outputComponents[iIdx - 1].type === "adjective" && outputComponents[iIdx - 1]._isQuantifier) {
-        finalOrder.push(outputComponents[iIdx - 1].word);
-      }
+      let quantAdjs = outputComponents.filter(c => c.type === "adjective" && c._isQuantifier && c._modifiesIdx === iIdx);
+      quantAdjs.forEach(a => finalOrder.push(a.word));
+      let insAdjs = outputComponents.filter(c => c.type === "adjective" && !c._isQuantifier && c._modifiesIdx === iIdx);
+      insAdjs.forEach(a => finalOrder.push(a.word));
       finalOrder.push(ins.word);
     });
 
@@ -1262,6 +1300,19 @@ function doTranslate() {
         if (selIdx >= res.meanings.length) selIdx = 0;
         res.selectedMeaning = res.meanings[selIdx];
         res.meaningIdx = selIdx;
+        if (res.type === "adjective" && !res.case) {
+          // Adjective tokens don't carry a structured case field the way
+          // nouns/pronouns do — analyzeWordMorphology only records it in the
+          // free-text "meta" description (see its adjective-matching branch
+          // above). Recover it here so a run of adjacent adjectives that
+          // actually agree with two DIFFERENT nouns (one before, one after)
+          // can be told apart below instead of being merged as if they were
+          // both modifying the same noun.
+          if (/\(accusative\)/.test(res.meta)) res.case = "accusative";
+          else if (/\(genitive\)/.test(res.meta)) res.case = "genitive";
+          else if (/\(instrumental\)/.test(res.meta)) res.case = "instrumental";
+          else res.case = "nominative";
+        }
         analyzedTokens.push(res);
         literalGlosser.push(res.selectedMeaning);
       } else {
@@ -1271,18 +1322,130 @@ function doTranslate() {
       }
     });
 
+    // ── Adjective-noun merge pass ───────────────────────────────────────────
+    // Kestelál adjective placement depends on the grammatical role of the
+    // noun/pronoun they modify (mirroring how the English→Kestelál generator
+    // in renderEngKesGloss lays clauses out): an adjective modifying a
+    // case-marked object/instrumental/genitive noun stands BEFORE it
+    // ("atálle sila" = tall(acc) son(acc) = "the tall son" as an object), while
+    // an adjective modifying a bare nominative/subject noun stands AFTER it
+    // ("Silas atál" = son tall = "the tall son" as a subject). If the
+    // adjective and its head are classified into separate buckets below
+    // without accounting for this, the article ends up either glued to the
+    // bare noun ("Big the victory" instead of "The big victory") or the
+    // adjective gets misattached to an unrelated following word (e.g. an
+    // object pronoun that just happens to come right after a postpositive
+    // subject adjective). To fix this we fold each run of adjectives into
+    // whichever adjacent noun/pronoun/name it actually modifies *before*
+    // subject/object/prepositional-phrase classification runs, so every
+    // downstream step (article insertion, case bucketing, preposition
+    // look-ahead/behind) sees one merged unit with the English word order
+    // ("the " + adjective(s) + noun) already correct regardless of which
+    // side the adjective sat on in the Kestelál source. Adjectives with no
+    // qualifying head on either side (predicate/orphan adjectives) are left
+    // as standalone tokens exactly as before, still falling into "others".
+    let mergedTokens = [];
+    let consumed = new Array(analyzedTokens.length).fill(false);
+    // Attributive adjectives modify common nouns/names, never bare pronouns
+    // ("big son" is fine, "big me" is not) — so pronoun heads are only used
+    // as a last-resort fallback, below, and never as the primary target on
+    // either side. This is what lets the algorithm tell "Silas kil en suvár"
+    // (kil modifies Silas, en/"me" is unrelated) apart from "Es atálle sila
+    // suvár" (atálle modifies sila, Es/"I" is unrelated) even though in both
+    // sentences the adjective sits directly next to a pronoun on one side.
+    const isAttribHead = (x) => x && (x.type === "noun" || x.type === "name");
+    const isAnyHead = (x) => x && (x.type === "noun" || x.type === "pronoun" || x.type === "name");
+
+    for (let idx = 0; idx < analyzedTokens.length; idx++) {
+      if (consumed[idx]) continue;
+      let t = analyzedTokens[idx];
+
+      if (t.type !== "adjective") {
+        mergedTokens.push(t);
+        continue;
+      }
+
+      // Gather a run of consecutive adjectives, but only while they agree in
+      // case: "big tall son" is one run of two adjectives modifying the same
+      // noun, whereas "Silas atál atálle sila" has a nominative adjective
+      // (atál, agreeing with the preceding subject Silas) immediately
+      // followed by an accusative adjective (atálle, agreeing with the
+      // following object sila) with nothing to separate them — grouping
+      // those into a single run would wrongly treat them as one compound
+      // modifier of a single noun.
+      let adjWords = [t.selectedMeaning];
+      let runCase = t.case;
+      let j = idx + 1;
+      while (analyzedTokens[j] && analyzedTokens[j].type === "adjective" &&
+             !consumed[j] && analyzedTokens[j].case === runCase) {
+        adjWords.push(analyzedTokens[j].selectedMeaning);
+        j++;
+      }
+
+      let fwd = analyzedTokens[j]; // token right after the adjective run
+      // A preceding subject noun is only a valid backward-attachment target
+      // if it's the token we most recently pushed to mergedTokens (i.e. it's
+      // truly adjacent, with nothing already sitting between it and this
+      // adjective run).
+      let back = idx > 0 ? analyzedTokens[idx - 1] : null;
+      let backAdjacent = back && mergedTokens.length > 0 && mergedTokens[mergedTokens.length - 1] === back;
+
+      let fwdQualifies = isAttribHead(fwd) && !consumed[j];
+      let backQualifies = isAttribHead(back) && back.case === "nominative" && backAdjacent;
+
+      let attachForward = false, attachBackward = false;
+      if (fwdQualifies && backQualifies) {
+        // Both sides look plausible (e.g. two adjacent bare/nominative
+        // nouns) — prefer whichever side is actually case-marked as the
+        // modified noun, defaulting to the following (prepositive) noun.
+        if (fwd.case !== "nominative") attachForward = true;
+        else attachBackward = true;
+      } else if (fwdQualifies) {
+        attachForward = true;
+      } else if (backQualifies) {
+        attachBackward = true;
+      } else {
+        // Neither side has a qualifying noun/name — fall back to allowing a
+        // pronoun head rather than dropping the adjective into "others"
+        // outright, preferring the forward (prepositive) reading first.
+        let fwdAny = isAnyHead(fwd) && !consumed[j];
+        let backAny = isAnyHead(back) && back.case === "nominative" && backAdjacent;
+        if (fwdAny) attachForward = true;
+        else if (backAny) attachBackward = true;
+      }
+
+      if (attachForward) {
+        mergedTokens.push(Object.assign({}, fwd, {
+          selectedMeaning: adjWords.join(" ") + " " + fwd.selectedMeaning
+        }));
+        for (let k = idx; k <= j; k++) consumed[k] = true;
+      } else if (attachBackward) {
+        // English still wants adjective-before-noun order even though the
+        // Kestelál source had it after, so rebuild the already-pushed token
+        // rather than appending after it.
+        mergedTokens[mergedTokens.length - 1] = Object.assign({}, back, {
+          selectedMeaning: adjWords.join(" ") + " " + back.selectedMeaning
+        });
+        for (let k = idx; k < j; k++) consumed[k] = true;
+      } else {
+        // No qualifying head on either side — keep the adjective run standalone.
+        for (let k = idx; k < j; k++) mergedTokens.push(analyzedTokens[k]);
+        for (let k = idx; k < j; k++) consumed[k] = true;
+      }
+    }
+
     let subjs = [], vbs = [], prepPhrases = [], looseObjs = [], others = [];
 
     // First pass: pair each preposition with the accusative noun/pronoun that follows it
     let skipNext = false;
-    analyzedTokens.forEach((t, idx) => {
+    mergedTokens.forEach((t, idx) => {
       if (skipNext) { skipNext = false; return; }
 
       if (t.type === "verb") {
         vbs.push(t);
       } else if (t.type === "preposition") {
         // Look ahead for the linked accusative noun/pronoun (may be immediately after, or before)
-        let linked = analyzedTokens[idx + 1];
+        let linked = mergedTokens[idx + 1];
         if (linked && (linked.type === "noun" || linked.type === "pronoun" || linked.type === "name") && linked.case === "accusative") {
           let nounGloss = linked.selectedMeaning;
           if (linked.type === "noun") nounGloss = "the " + nounGloss;
@@ -1290,7 +1453,7 @@ function doTranslate() {
           skipNext = true;
         } else {
           // Preposition without an immediately following acc noun — look behind
-          let prev = analyzedTokens[idx - 1];
+          let prev = mergedTokens[idx - 1];
           if (prev && (prev.type === "noun" || prev.type === "pronoun" || prev.type === "name") && prev.case === "accusative") {
             // The acc noun was already pushed to looseObjs — move it into a prepPhrase
             let nounGloss = prev.selectedMeaning;
@@ -1304,7 +1467,7 @@ function doTranslate() {
       } else if (t.type === "pronoun" || t.type === "noun" || t.type === "name") {
         if (t.case === "accusative") {
           // Check if next token is a preposition (acc noun comes before its preposition)
-          let next = analyzedTokens[idx + 1];
+          let next = mergedTokens[idx + 1];
           if (next && next.type === "preposition") {
             let prepGloss = next.selectedMeaning;
             let nounGloss = t.selectedMeaning;
@@ -1316,7 +1479,7 @@ function doTranslate() {
           }
         } else if (t.case === "instrumental") {
           // Check if next token is a preposition (e.g. ke = with)
-          let next = analyzedTokens[idx + 1];
+          let next = mergedTokens[idx + 1];
           if (next && next.type === "preposition") {
             let prepGloss = next.selectedMeaning;
             let nounGloss = t.selectedMeaning;
@@ -1512,9 +1675,14 @@ function doTranslate() {
       fluidTranslation = parts.join(" ").trim();
       fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + ".";
     } else {
-      fluidTranslation = literalGlosser.map((g, idx) => {
-        let orig = analyzedTokens[idx];
-        if (orig && orig.type === "noun" && !g.toLowerCase().startsWith("the ")) return "the " + g;
+      // No verb in the clause (e.g. a bare noun phrase like "Kil voss" = "the
+      // big victory"). Build the translation from mergedTokens rather than the
+      // raw per-word literalGlosser so an article fronts the WHOLE noun phrase
+      // (adjective + noun) instead of being spliced in directly before the noun.
+      fluidTranslation = mergedTokens.map((t) => {
+        let g = t.selectedMeaning;
+        if (t.type === "unknown") return `[${g}]`;
+        if (t.type === "noun" && !g.toLowerCase().startsWith("the ")) return "the " + g;
         return g;
       }).join(" ");
       fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + ".";
@@ -2193,6 +2361,7 @@ function doTranslate() {
       comp.num = isPlural ? "plural" : "singular";
       comp._quantifierPending = false;
       comp.role = nextNoun.role; // same syntactic role as the noun it modifies
+      comp._modifiesIdx = outputComponents.indexOf(nextNoun); // which exact noun, for word-order placement (see below)
     }
 
     // Post-process A2: co-inflect ordinary (non-quantifier) pending adjectives with
