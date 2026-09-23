@@ -1038,10 +1038,11 @@ function switchVariant(compIdx, variantIdx) {
     comp.word = reInflectEntry(chosen, comp._inflectParams);
   }
   // Re-render the full gloss + synthesized text
-  renderEngKesGloss(state.components, state.words);
+  renderEngKesGloss(state.components, state.words, state.terminalPunct);
 }
 
-function renderEngKesGloss(outputComponents, words) {
+function renderEngKesGloss(outputComponents, words, terminalPunct) {
+  if (!terminalPunct) terminalPunct = ".";
   const box = document.getElementById('translate-result');
 
   // Rebuild finalOrder from updated components.
@@ -1171,7 +1172,7 @@ function renderEngKesGloss(outputComponents, words) {
   }
 
   let translationText = finalOrder.filter(w => w && !w.startsWith('[')).join(" ");
-  if (translationText) translationText = translationText.charAt(0).toUpperCase() + translationText.slice(1) + ".";
+  if (translationText) translationText = translationText.charAt(0).toUpperCase() + translationText.slice(1) + terminalPunct;
 
   // Build gloss pairs directly from outputComponents using stored _engSource labels.
   // This avoids any sync-walking of the English words array (which breaks for multi-word
@@ -1275,6 +1276,14 @@ function doTranslate() {
   const box = document.getElementById('translate-result');
   if (!input) { box.style.display = "none"; box.innerHTML = ""; return; }
   box.style.display = "block";
+
+  // Detect the sentence's own terminal punctuation (?, !, or .) BEFORE any
+  // downstream code strips punctuation out of the input for tokenization —
+  // otherwise every translation silently hardens into a period, so a
+  // question like "will you help me?" or an exclamation like "help me!"
+  // comes back reading as a flat statement in the other language.
+  const terminalMatch = input.match(/([?!.])\s*$/);
+  const terminalPunct = terminalMatch ? terminalMatch[1] : ".";
 
   if (dir === "kes-eng") {
     let tokens = input.split(/\s+/);
@@ -1434,6 +1443,69 @@ function doTranslate() {
       }
     }
 
+    // ── Genitive-pronoun + noun merge pass ──────────────────────────────────
+    // A possessive pronoun ("ei"=my, "si"=his/her/its, "ai"=your, "oi"=our,
+    // "yai"=their) needs the same treatment adjectives just got above, for a
+    // similar reason: without merging it into its noun here, the noun's own
+    // "add the article" logic (further below) has no way of knowing a
+    // possessive already precedes it, producing a doubled-up "My the son"
+    // instead of "My son". It's actually worse for objects specifically —
+    // since the classification loop below buckets tokens by their own case,
+    // and a genitive-case pronoun matches neither the accusative nor
+    // instrumental check, it falls through to the SUBJECT bucket by default
+    // regardless of which noun it actually modifies, producing garbled
+    // output like "I my help the son" instead of "I help my son". Merging
+    // here first means the combined unit inherits the NOUN's own case/role,
+    // so it lands in the correct bucket. Genitive pronouns are prepositive
+    // in every example we've seen ("Ei silas" = my son), but the
+    // English→Kestelál generator currently emits them postpositive
+    // specifically after an instrumental noun ("silau ei"), so both orders
+    // are handled here for robustness.
+    let mergedTokens2 = [];
+    let consumed2 = new Array(mergedTokens.length).fill(false);
+    // A possessive attaches to a common noun or a name — never to another
+    // pronoun ("his son" is fine, "his me" isn't a thing, the same lesson
+    // the adjective merge above already had to learn for attributive
+    // adjective+pronoun adjacency). Restricting to noun/name here prevents a
+    // genitive pronoun from wrongly latching onto an unrelated pronoun that
+    // just happens to sit next to it (e.g. "Silas si en suvár" — "si" should
+    // stay a standalone/orphan genitive here rather than merge into "en").
+    const isPossessibleHead = (x) => x && (x.type === "noun" || x.type === "name");
+    for (let idx = 0; idx < mergedTokens.length; idx++) {
+      if (consumed2[idx]) continue;
+      let t = mergedTokens[idx];
+      let next = mergedTokens[idx + 1];
+
+      if (t.type === "pronoun" && t.case === "genitive" && isPossessibleHead(next) && !consumed2[idx + 1]) {
+        // Prepositive: "Ei silas" = my son
+        mergedTokens2.push(Object.assign({}, next, {
+          selectedMeaning: t.selectedMeaning + " " + next.selectedMeaning,
+          _hasPossessive: true
+        }));
+        consumed2[idx] = true; consumed2[idx + 1] = true;
+        continue;
+      }
+      if (isPossessibleHead(t) && t.case === "instrumental" && next && next.type === "pronoun" && next.case === "genitive" && !consumed2[idx + 1]) {
+        // Postpositive fallback: "silau ei" = son(instrumental) my
+        // Restricted specifically to an instrumental-case head — this is the
+        // one documented ordering the eng→kes generator currently produces
+        // ("I speak with MY son" → "silau ei"). Without restricting by case,
+        // this rule is too eager: at the very start of a sentence like "Es ei
+        // sila suvár" ("I help my son"), it would incorrectly match "Es"(I)
+        // + "ei"(my) as if "my" were possessing "I" — consuming both tokens
+        // and starving the correct prepositive "ei sila" (my son) merge just
+        // below of ever running, since "ei" would already be marked consumed.
+        mergedTokens2.push(Object.assign({}, t, {
+          selectedMeaning: next.selectedMeaning + " " + t.selectedMeaning,
+          _hasPossessive: true
+        }));
+        consumed2[idx] = true; consumed2[idx + 1] = true;
+        continue;
+      }
+      mergedTokens2.push(t);
+    }
+    mergedTokens = mergedTokens2;
+
     let subjs = [], vbs = [], prepPhrases = [], looseObjs = [], others = [];
 
     // First pass: pair each preposition with the accusative noun/pronoun that follows it
@@ -1448,7 +1520,7 @@ function doTranslate() {
         let linked = mergedTokens[idx + 1];
         if (linked && (linked.type === "noun" || linked.type === "pronoun" || linked.type === "name") && linked.case === "accusative") {
           let nounGloss = linked.selectedMeaning;
-          if (linked.type === "noun") nounGloss = "the " + nounGloss;
+          if (linked.type === "noun" && !linked._hasPossessive) nounGloss = "the " + nounGloss;
           prepPhrases.push(t.selectedMeaning + " " + nounGloss);
           skipNext = true;
         } else {
@@ -1457,7 +1529,7 @@ function doTranslate() {
           if (prev && (prev.type === "noun" || prev.type === "pronoun" || prev.type === "name") && prev.case === "accusative") {
             // The acc noun was already pushed to looseObjs — move it into a prepPhrase
             let nounGloss = prev.selectedMeaning;
-            if (prev.type === "noun") nounGloss = "the " + nounGloss;
+            if (prev.type === "noun" && !prev._hasPossessive) nounGloss = "the " + nounGloss;
             looseObjs.pop();
             prepPhrases.push(t.selectedMeaning + " " + nounGloss);
           } else {
@@ -1471,7 +1543,7 @@ function doTranslate() {
           if (next && next.type === "preposition") {
             let prepGloss = next.selectedMeaning;
             let nounGloss = t.selectedMeaning;
-            if (t.type === "noun") nounGloss = "the " + nounGloss;
+            if (t.type === "noun" && !t._hasPossessive) nounGloss = "the " + nounGloss;
             prepPhrases.push(prepGloss + " " + nounGloss);
             skipNext = true;
           } else {
@@ -1483,7 +1555,7 @@ function doTranslate() {
           if (next && next.type === "preposition") {
             let prepGloss = next.selectedMeaning;
             let nounGloss = t.selectedMeaning;
-            if (t.type === "noun") nounGloss = "the " + nounGloss;
+            if (t.type === "noun" && !t._hasPossessive) nounGloss = "the " + nounGloss;
             prepPhrases.push(prepGloss + " " + nounGloss);
             skipNext = true;
           } else {
@@ -1491,7 +1563,7 @@ function doTranslate() {
             // includes "with" (e.g. "with me"). Render a clickable toggle so the
             // reader can switch between the two natural readings.
             let nounGloss = t.selectedMeaning;
-            if (t.type === "noun") nounGloss = "the " + nounGloss;
+            if (t.type === "noun" && !t._hasPossessive) nounGloss = "the " + nounGloss;
             let isWithPron = t.type === "pronoun" && nounGloss.toLowerCase().startsWith("with ");
             if (isWithPron) {
               // Strip the leading "with " to get the bare pronoun gloss (e.g. "me")
@@ -1656,12 +1728,12 @@ function doTranslate() {
 
       let subjectPhrases = subjs.map(s => {
         let text = s.selectedMeaning;
-        if (s.type === "noun" && !text.toLowerCase().startsWith("the ")) text = "the " + text;
+        if (s.type === "noun" && !s._hasPossessive && !text.toLowerCase().startsWith("the ")) text = "the " + text;
         return text;
       });
       let objPhrases = looseObjs.map(o => {
         let text = o.selectedMeaning;
-        if (o.type === "noun" && !text.toLowerCase().startsWith("the ")) text = "the " + text;
+        if (o.type === "noun" && !o._hasPossessive && !text.toLowerCase().startsWith("the ")) text = "the " + text;
         return text;
       });
 
@@ -1673,7 +1745,7 @@ function doTranslate() {
       if (others.length > 0) parts.push(others.map(o => o.selectedMeaning).join(" "));
 
       fluidTranslation = parts.join(" ").trim();
-      fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + ".";
+      fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + terminalPunct;
     } else {
       // No verb in the clause (e.g. a bare noun phrase like "Kil voss" = "the
       // big victory"). Build the translation from mergedTokens rather than the
@@ -1682,10 +1754,10 @@ function doTranslate() {
       fluidTranslation = mergedTokens.map((t) => {
         let g = t.selectedMeaning;
         if (t.type === "unknown") return `[${g}]`;
-        if (t.type === "noun" && !g.toLowerCase().startsWith("the ")) return "the " + g;
+        if (t.type === "noun" && !t._hasPossessive && !g.toLowerCase().startsWith("the ")) return "the " + g;
         return g;
       }).join(" ");
-      fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + ".";
+      fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + terminalPunct;
     }
 
     box.innerHTML = `
@@ -1784,7 +1856,25 @@ function doTranslate() {
       // Universal quantifiers in English always imply plurality for the noun they describe
       if (token === "all" || token === "every" || token === "each") isEnglishPlural = true;
 
-      for (let len = Math.min(5, words.length - i); len >= 1; len--) {
+      // "her" is genuinely ambiguous in English between the accusative object
+      // pronoun ("I help her") and the genitive possessive determiner ("her
+      // son") — and the dictionary has both senses as separate entries with
+      // different case values ("in" = him/her/it, accusative; "si" = his/
+      // her/its, genitive). The generic phrase-matcher below has no notion
+      // of syntactic position, so left to itself it always finds whichever
+      // entry happens to come first in the dictionary array — which was
+      // producing "her son" → "in silas" (accusative "her") instead of the
+      // "si silas" ("si" = same possessive as "his"/"its") a fluent reading
+      // needs. Disambiguate up front by checking whether "her" is
+      // immediately followed by the start of a noun phrase.
+      if (token === "her" && words[i+1] &&
+          (findWordByEnglishPhrase(words[i+1], "NOUN") || findWordByEnglishPhrase(words[i+1], "ADJ"))) {
+        let genEntry = CORE_DICT.find(x => x.t === "PRON" && x.case === "genitive" &&
+          x.e.toLowerCase().split(/[,;]+/).map(s => s.trim()).includes("her"));
+        if (genEntry) { matchedEntry = genEntry; matchLength = 1; }
+      }
+
+      if (!matchedEntry) for (let len = Math.min(5, words.length - i); len >= 1; len--) {
         let subPhrase = words.slice(i, i + len).join(" ");
         let normalizedPhrase = subPhrase.replace(/\s+\/\s+/g, "/");
         let found = findWordByEnglishPhrase(subPhrase) || findWordByEnglishPhrase(normalizedPhrase);
@@ -1924,8 +2014,24 @@ function doTranslate() {
           i += 2;
           continue;
         }
-      } else if (token === "will" && words[i+1]) {
+      } else if (token === "will" && words[i+1] && resolveVerbToken(words[i+1])) {
         clauseTime = "future"; clauseAspect = "simple"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
+      } else if (token === "will" && words[i+1] && !resolveVerbToken(words[i+1])) {
+        // Subject-auxiliary inversion (a question): "will YOU help me?" — the
+        // token right after "will" is the SUBJECT, not the verb, so none of
+        // the "will X" chain patterns above match it. Without this branch,
+        // "will" falls through to the generic dictionary lookup, which also
+        // matches the NOUN "ulátes" ("wish, desire, will") — so "will you
+        // help me?" would incorrectly inject that noun instead of marking
+        // the clause as future tense. Consume ONLY "will" here (not the
+        // subject) and set the clause's tense; the subject then gets picked
+        // up normally on the next loop iteration(s), and whichever verb
+        // token is reached later in this same clause reads clauseTime off
+        // the plain VERB dispatch branch further below (it already checks
+        // `clauseTime === "future"` for exactly this reason).
+        clauseTime = "future"; clauseAspect = "simple";
+        i += 1;
+        continue;
       } else if ((token === "have" || token === "has") && words[i+1]) {
         clauseTime = "present"; clauseAspect = "perfect"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
       } else if (token === "had" && words[i+1]) {
@@ -2019,7 +2125,32 @@ function doTranslate() {
           let prepGoverns = prepComp ? (prepComp._governsCase || "accusative") : null;
           let assignedCase = matchedEntry.case || "nominative";
 
-          if (nextIsInstrumental || (precededByPrep && prepGoverns === "instrumental")) {
+          if (matchedEntry.case === "genitive") {
+            // Possessive pronoun ("my"/"your"/"his"/"her"/"its"/"our"/"their").
+            // English possessives are inherently definite — "my son" is just
+            // as definite as "the son" — but unlike "the" they never set
+            // nextIsDefinite anywhere else in the parser. Without this, the
+            // noun that follows falls through to being treated as an
+            // INDEFINITE object (see the NOUN branch below: `isIndefinite`
+            // defaults to true whenever neither nextIsDefinite nor
+            // nextIsGenitive is set), and indefinite objects skip
+            // accusative/case inflection entirely — so "I help my son" was
+            // leaving "son" in its bare/uninflected form instead of the
+            // accusative object form "I help the son" already gets right.
+            nextIsDefinite = true;
+            // Possessive pronouns are determiners, not clause arguments — they
+            // always stay in their genitive dictionary form regardless of
+            // whether the noun phrase they introduce ends up as the clause's
+            // subject/object/instrumental (unlike ordinary pronouns in the
+            // branches below, which DO switch form for those roles). This
+            // check has to come BEFORE the instrumental check right below,
+            // not just skip it, because otherwise a possessive sitting
+            // between a preposition and its noun ("with MY son") would itself
+            // consume and clear nextIsInstrumental, leaving nothing for the
+            // noun that actually needs the instrumental case — the same
+            // symptom as the definiteness bug above, just for instrumental
+            // case instead of accusative.
+          } else if (nextIsInstrumental || (precededByPrep && prepGoverns === "instrumental")) {
             // Instrumental preposition (ke/eke/with): find the instrumental form of this pronoun
             let insForm = CORE_DICT.find(x => x.t === "PRON" && x.case === "instrumental" && x.num === (matchedEntry.num || "singular") &&
               x.e.toLowerCase().split(/[,;]+/).map(s=>s.trim()).some(gl => matchedEntry.e.toLowerCase().split(/[,;]+/).map(s=>s.trim()).some(me => me === gl || gl.endsWith(me))));
@@ -2035,7 +2166,10 @@ function doTranslate() {
           }
           outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: assignedCase, _entry: matchedEntry, _inflectParams: { type: "pronoun", role }, _engSource: words.slice(i, i + matchLength).join(" ") });
           nextIsIndefinite = false;
-          nextIsDefinite = false;
+          // Don't clear nextIsDefinite here when THIS pronoun is the one that
+          // just set it (a possessive like "my") — it needs to survive to be
+          // read by the noun that comes right after it, on the next token.
+          if (matchedEntry.case !== "genitive") nextIsDefinite = false;
           nextIsGenitive = false;
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
           let isPlural = isEnglishPlural || (words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]));
@@ -2057,11 +2191,18 @@ function doTranslate() {
           // Genitive inflection
           if (nextIsGenitive) {
             let cls2 = detectNounClass(matchedEntry.k);
+            // Preserve capitalization for proper names (NAME entries) — common
+            // nouns are stored lowercase in the dictionary and should stay
+            // that way, but a name like "Yonas" needs to stay "Yonai", not
+            // fall to "yonai". (The general accusative/nominative branch
+            // further below never calls .toLowerCase() at all, which is why
+            // only genitive/instrumental case-suffixed names were affected.)
+            let caseBase = matchedEntry.t === "NAME" ? matchedEntry.k : matchedEntry.k.toLowerCase();
             if (cls2 === "1st") {
-              inflected = matchedEntry.k.toLowerCase() + "i";
+              inflected = caseBase + "i";
             } else {
-              let base2 = matchedEntry.k.toLowerCase().endsWith('s') ? matchedEntry.k.slice(0, -1) : matchedEntry.k;
-              inflected = base2.toLowerCase() + "i";
+              let base2 = caseBase.toLowerCase().endsWith('s') ? caseBase.slice(0, -1) : caseBase;
+              inflected = base2 + "i";
             }
             role = "genitive";
           }
@@ -2070,12 +2211,13 @@ function doTranslate() {
           if (nextIsInstrumental || (precededByPrep && prepGoverns === "instrumental")) {
             let cls2 = detectNounClass(matchedEntry.k);
             let isPlural2 = isPlural; // use the already-computed isPlural, not the raw flag
+            let caseBase = matchedEntry.t === "NAME" ? matchedEntry.k : matchedEntry.k.toLowerCase();
             if (cls2 === "1st") {
               const ACCENT_MAP_I = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
               function stripAccI(s) { return s.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP_I[c]).split('').reverse().join(''); }
-              inflected = isPlural2 ? stripAccI(matchedEntry.k.toLowerCase()) + "úa" : matchedEntry.k.toLowerCase() + "u";
+              inflected = isPlural2 ? stripAccI(caseBase) + "úa" : caseBase + "u";
             } else {
-              let base2 = matchedEntry.k.toLowerCase().endsWith('s') ? matchedEntry.k.slice(0, -1) : matchedEntry.k.toLowerCase();
+              let base2 = caseBase.toLowerCase().endsWith('s') ? caseBase.slice(0, -1) : caseBase;
               inflected = isPlural2 ? base2 + "wa" : base2 + "u";
             }
             if (nextIsInstrumental) role = "instrumental";
@@ -2505,8 +2647,8 @@ function doTranslate() {
     window._lastOutputComponents = outputComponents;
 
     // Store state for variant switching, then render
-    window._variantState = { selections: {}, components: outputComponents, words };
-    renderEngKesGloss(outputComponents, words);
+    window._variantState = { selections: {}, components: outputComponents, words, terminalPunct };
+    renderEngKesGloss(outputComponents, words, terminalPunct);
   }
 }
 
