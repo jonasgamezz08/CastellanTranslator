@@ -451,6 +451,62 @@ td {
   transition: transform 0.3s, opacity 0.3s;
 }
 #notif.show { transform: translateY(0); opacity: 1; }
+
+/* Dynamically-generated tables (verb/noun paradigms) can have more columns
+   than a phone screen is wide — scroll horizontally instead of squeezing
+   Kestelál + script text illegibly small or overflowing the page. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: 0.8rem;
+}
+.table-scroll table { margin-top: 0; min-width: 480px; }
+
+/* ============================================================
+   Responsive layout
+   ============================================================ */
+
+/* Tablet / narrow desktop: tighten a couple of fixed-width spots
+   before things get properly cramped, without changing the layout. */
+@media (max-width: 900px) {
+  .dict-entry { grid-template-columns: 150px 64px 1fr; }
+}
+
+/* Phone: header/nav chrome, card padding, and anything laid out with
+   fixed pixel widths need to actually reflow rather than just shrink. */
+@media (max-width: 640px) {
+  header { padding: 2rem 0.75rem 1.5rem; }
+  .title-rune { letter-spacing: 0.3em; font-size: 10px; }
+  .subtitle { font-size: 0.92rem; }
+  /* The large decorative corner glyphs are purely ambient — at phone
+     width they sit close enough to the title to visually compete with it. */
+  .header-deco { font-size: 2.2rem; opacity: 0.6; }
+  .header-deco-left  { left: 0.5rem; }
+  .header-deco-right { right: 0.5rem; }
+
+  nav { padding: 0 0.5rem; }
+  .tab-btn { padding: 0.7rem 0.9rem; font-size: 0.74rem; }
+
+  main { padding: 1.25rem 0.75rem 3rem; }
+  .card { padding: 1.1rem 0.9rem; }
+
+  .direction-row { flex-wrap: wrap; gap: 0.6rem 1rem; }
+
+  .result-box { padding: 0.9rem 1rem; font-size: 1rem; }
+
+  .gloss-row { gap: 1rem; }
+  .gloss-word { min-width: 0; flex-basis: 100%; }
+
+  /* Fixed pixel columns stop making sense once the card itself is
+     narrower than they add up to — stack each dictionary entry instead. */
+  .dict-entry {
+    grid-template-columns: 1fr;
+    gap: 0.25rem 0;
+  }
+  .de-type { justify-self: start; }
+
+  #notif { left: 1rem; right: 1rem; bottom: 1rem; text-align: center; }
+}
 </style>
 </head>
 <body>
@@ -686,6 +742,64 @@ function findWordByEnglishPhrase(phrase, typeFilter = null) {
   });
 }
 
+// Same matching rule as findWordByEnglishPhrase, but returns EVERY dictionary
+// entry that matches the phrase, not just the first one found — this is what
+// exposes genuine cross-type homonyms like "fall" (audal = VERB "to fall" /
+// akúras = NOUN "a fall, a descent"). Deduped by (k,t) in case a gloss lists
+// the same phrase twice for one entry.
+function findAllWordsByEnglishPhrase(phrase) {
+  let q = phrase.toLowerCase().trim();
+  if (!q) return [];
+  let out = [];
+  let seen = new Set();
+  for (let x of CORE_DICT) {
+    let def = x.e.toLowerCase().trim();
+    let options = def.split(/[,;\/]+|\bor\b/).map(o => o.trim());
+    let cleanQ = q.startsWith("to ") ? q.substring(3).trim() : q;
+    let cleanOptions = options.map(opt => opt.startsWith("to ") ? opt.substring(3).trim() : opt);
+    let matches = def === q || options.includes(q) || cleanOptions.includes(cleanQ);
+    if (matches) {
+      let sig = x.k + "|" + x.t;
+      if (!seen.has(sig)) { seen.add(sig); out.push(x); }
+    }
+  }
+  return out;
+}
+
+// Picks which candidate entry should be used by default when an English
+// phrase matches multiple Kestelál dictionary entries of DIFFERENT word
+// types (e.g. "fall" = audal/VERB or akúras/NOUN). Without this, the raw
+// dictionary array order decided it — so "The fall was hard" (a NOUN
+// position) could silently come out using the VERB entry, with no signal
+// to the person that anything was wrong. This is a heuristic, not a parser:
+// it uses word-position context only. The override UI (see
+// window._variantState / findVariants below) exists precisely because this guess can be wrong.
+function pickBestEnglishCandidate(candidates, context) {
+  if (candidates.length <= 1) return candidates[0] || null;
+  const { precededByDeterminer, hasVerbAlready, followedByCopula } = context;
+  let score = (x) => {
+    if (precededByDeterminer || followedByCopula) {
+      // Right after "the"/"a"/"my"/"all"/etc., or right before "is"/"was" —
+      // this position is a noun phrase head, essentially never a verb.
+      if (x.t === "NOUN" || x.t === "NAME") return 3;
+      if (x.t === "ADJ" || x.t === "PRON" || x.t === "NUM") return 2;
+      return 0; // VERB, CONJ, PART, PREP, ADV
+    }
+    if (!hasVerbAlready) {
+      // No verb yet in the clause and no determiner in front — most likely
+      // this word IS the verb ("I fall", "The son helps"), so prefer VERB.
+      if (x.t === "VERB") return 3;
+      return 1;
+    }
+    // Past the clause's verb already — an object/complement position, so
+    // nouns/adjectives outrank a second verb.
+    if (x.t === "NOUN" || x.t === "NAME" || x.t === "ADJ") return 2;
+    if (x.t === "VERB") return 0;
+    return 1;
+  };
+  return candidates.slice().sort((a, b) => score(b) - score(a))[0];
+}
+
 function findWordByEnglish(token, typeFilter = null) {
   return findWordByEnglishPhrase(token, typeFilter);
 }
@@ -698,6 +812,30 @@ function detectNounClass(w) {
   if (vowelGroups.length <= 1) return "1st";
   if (!clean.endsWith('s')) return "1st";
   return "2nd";
+}
+
+// A Kestelál plural noun (num:"plural") is recognized correctly by
+// analyzeWordMorphology's suffix matching, but the English gloss it carries
+// is always the bare dictionary singular ("son") — this pluralizes that
+// gloss text for display/rendering in the kes→eng direction. Handles
+// multi-word glosses ("prince/ruler") by pluralizing each alternative.
+const IRREGULAR_ENGLISH_PLURALS = {
+  "child": "children", "man": "men", "woman": "women",
+  "person": "people", "tooth": "teeth", "foot": "feet", "mouse": "mice",
+  "goose": "geese", "ox": "oxen"
+};
+function pluralizeEnglish(word) {
+  return word.split('/').map(w => {
+    let trimmed = w.trim();
+    let lower = trimmed.toLowerCase();
+    if (IRREGULAR_ENGLISH_PLURALS[lower]) return IRREGULAR_ENGLISH_PLURALS[lower];
+    if (/[sxz]$/.test(lower) || /[cs]h$/.test(lower)) return trimmed + "es";
+    if (/[^aeiou]y$/.test(lower)) return trimmed.slice(0, -1) + "ies";
+    if (/fe?$/.test(lower) && !/(ff|[aeiou]f)$/.test(lower)) {
+      return trimmed.replace(/fe?$/, "ves");
+    }
+    return trimmed + "s";
+  }).join('/');
 }
 
 function detectVocalicStem(w) {
@@ -761,6 +899,28 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
   let exactMatch = CORE_DICT.find(x => x.k.toLowerCase() === cl);
   if (exactMatch) {
     if (exactMatch.t === "PRON") {
+      // "sedda" is a genuine homonym in the dictionary — the same written
+      // form covers both the plural demonstrative "these" and the 1st-
+      // person reflexive "myself", with no case/number on the entry to
+      // fall back on. Left to the generic PRON handling below, it always
+      // defaulted to nominative singular and to whichever sense happened to
+      // be listed first in the gloss ("these") — so "Es sedda suvór" ("I
+      // helped myself") was coming out as "I these helped" (wrongly bucketed
+      // as a second subject, wrong sense picked). Disambiguate here using
+      // the one signal available at the word level: "these" is a determiner
+      // and sits directly before the noun it modifies ("sedda silaan" =
+      // "these sons"); a reflexive "myself" never does, since it's a
+      // complete object all on its own.
+      if (exactMatch.k.toLowerCase() === "sedda") {
+        let nextTok = adjacentTokens[currentIndex + 1];
+        let nextIsNoun = nextTok && CORE_DICT.some(x => x.t === "NOUN" &&
+          (x.k.toLowerCase() === nextTok.toLowerCase().replace(/[,!?\.;:'"]/g, '') ||
+           analyzeWordMorphology(nextTok)?.type === "noun"));
+        if (nextIsNoun) {
+          return { type: "pronoun", base: "sedda", gloss: "these", case: "nominative", num: "plural", meta: `Case: nominative\nNumber: plural\n(demonstrative "these")` };
+        }
+        return { type: "pronoun", base: "sedda", gloss: "myself", case: "accusative", num: "singular", meta: `Case: accusative\nNumber: singular\n(reflexive "myself")` };
+      }
       return { type: "pronoun", base: exactMatch.k, gloss: exactMatch.e, case: exactMatch.case || 'nominative', num: exactMatch.num || 'singular', meta: `Case: ${exactMatch.case || 'nominative'}\nNumber: ${exactMatch.num || 'singular'}` };
     }
     if (exactMatch.t === "PREP") {
@@ -779,6 +939,15 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
     if (exactMatch.t === "NAME") {
       let cls = exactMatch.cls || detectNounClass(exactMatch.k);
       return { type: "name", class: cls, base: exactMatch.k, gloss: exactMatch.e, case: "nominative", num: "singular", meta: `Class: ${cls}\nCase: nominative\nNumber: singular` };
+    }
+    if (exactMatch.t === "PART") {
+      return { type: "particle", base: exactMatch.k, gloss: exactMatch.e, meta: `Part of speech: particle` };
+    }
+    if (exactMatch.t === "CONJ") {
+      return { type: "conjunction", base: exactMatch.k, gloss: exactMatch.e, meta: `Part of speech: conjunction` };
+    }
+    if (exactMatch.t === "NUM") {
+      return { type: "number", base: exactMatch.k, gloss: exactMatch.e, meta: `Part of speech: number` };
     }
   }
 
@@ -929,18 +1098,38 @@ function analyzeWordMorphology(word, adjacentTokens = [], currentIndex = 0) {
 // Global state: variantSelections[translationId][compIdx] = chosenVariantIndex
 window._variantState = { id: 0, selections: {}, components: [], words: [] };
 
-function findVariants(entry) {
+function findVariants(entry, phrase) {
   if (!entry) return [];
-  // Collect all definition tokens from this entry
+  // Prefer exact-phrase matching when we know the literal English phrase
+  // that was translated (comp._engSource, set at parse time) — this returns
+  // every dictionary entry that's actually a valid reading of THAT phrase,
+  // across ALL word types, so a verb/noun homonym pair like "fall" (audal =
+  // VERB "to fall" / akúras = NOUN "a fall") can be switched between.
+  //
+  // The old approach here matched on ANY single overlapping gloss token
+  // between two entries' full definitions, restricted to a hardcoded
+  // same-family type list (NOUN⇄ADJ⇄NAME, but never NOUN⇄VERB). That meant:
+  // (a) true cross-type homonyms could never be reached from the dropdown —
+  //     exactly the "verb showcased as a noun with no way to switch" report —
+  //     and (b) two entries that happen to share one incidental gloss word
+  //     out of several ("collapse" appearing in two otherwise-unrelated
+  //     entries, say) would get offered as "variants" of each other even
+  //     though neither is a valid reading of what the person actually typed
+  //     — the "non-related words appear after switching" report.
+  if (phrase) {
+    let exact = findAllWordsByEnglishPhrase(phrase);
+    if (exact.length > 0) return exact;
+  }
+  // Fallback (no phrase available, e.g. called from older code paths):
+  // same-family fuzzy matching as before.
   const defTokens = new Set(
     entry.e.toLowerCase().split(/[,;\/]+/).map(s => s.trim()).filter(Boolean)
   );
-  // Types that can cross-variant with each other (substantive use of adjectives, etc.)
   const CROSS_VARIANT_TYPES = {
-    "NOUN": ["NOUN", "ADJ", "NAME"],
+    "NOUN": ["NOUN", "ADJ", "NAME", "VERB"],
     "ADJ":  ["ADJ", "NOUN"],
     "NAME": ["NAME", "NOUN"],
-    "VERB": ["VERB"],
+    "VERB": ["VERB", "NOUN"],
     "ADV":  ["ADV"],
     "PREP": ["PREP"],
   };
@@ -1027,13 +1216,87 @@ function reInflectEntry(entry, inflectParams) {
   return entry.k;
 }
 
+// Rebuilds a parsed component's grammatical fields (type/case/num/_inflectParams/
+// etc.) to match a newly-chosen dictionary entry, not just its displayed word.
+// Needed because switching a variant can cross word TYPES (e.g. "fall" from
+// the noun akúras to the verb audal) — the component's `type` drives which
+// bucket it lands in during finalOrder assembly (subject/object/verb/...), so
+// leaving it as "noun" after picking a verb entry would silently keep the
+// word parked in the wrong slot, or leave it out of the sentence entirely.
+// This is necessarily a set of best-guess defaults where the old component
+// carried no equivalent information (e.g. no tense exists on a noun to carry
+// over when switching to a verb) — that's an inherent limit of doing this
+// after the fact rather than reparsing, not something a smarter default can
+// fully solve, so it's called out in the UI (see the variant dropdown's
+// type-labeled options) so the person can tell what changed.
+// Computes reasonable _inflectParams for PREVIEWING `entry` in the variant
+// dropdown, given the currently-selected component `comp` for grammatical
+// context (case/number/role to carry over) — entry may be a different word
+// TYPE than comp currently is (that's the whole point of cross-type variant
+// switching), so this cannot just reuse comp._inflectParams verbatim: those
+// params are shaped for comp's CURRENT type, and e.g. handing a verb's
+// _inflectParams (type:"noun", targetCase, cls...) to reInflectEntry for a
+// NOUN candidate while comp is currently a VERB would run the noun-inflection
+// branch against a verb stem and produce garbage.
+function defaultInflectParamsForEntry(entry, comp) {
+  if (entry.t === "VERB") {
+    return { type: "verb", suffix: (comp._inflectParams && comp._inflectParams.type === "verb") ? comp._inflectParams.suffix : "ár" };
+  }
+  if (entry.t === "NOUN" || entry.t === "NAME") {
+    let targetCase = comp.case && comp.case !== "nominative" ? comp.case : "nominative";
+    return { type: "noun", targetCase, isPlural: comp.num === "plural", cls: entry.cls || detectNounClass(entry.k) };
+  }
+  if (entry.t === "ADJ") {
+    return { type: "adj", subjectIsPlural: comp.num === "plural" };
+  }
+  if (entry.t === "PRON") {
+    return { type: "pronoun", role: comp.role };
+  }
+  return null;
+}
+
+function rebuildComponentForVariant(comp, chosenEntry, allComponents) {
+  if (chosenEntry.t === "VERB") {
+    comp.type = "verb";
+    comp._isCopula = chosenEntry.k.toLowerCase() === "tar";
+    delete comp.case; delete comp.num;
+    // Verbs are found by TYPE alone (see renderEngKesGloss's `vbs` filter),
+    // not by role — a leftover role: "object"/"subject" from before the
+    // switch would otherwise also make this component match the subject/
+    // object filters (which check role, not type) and render TWICE.
+    delete comp.role;
+  } else {
+    if (comp.type === "verb") {
+      // Crossing FROM a verb TO a noun/adjective/pronoun: those are found by
+      // role (subject/object), which a verb component never has. Default to
+      // "object" if some other component in the clause is already the verb,
+      // otherwise "subject" — a guess, same as the type-crossing default
+      // for tense (see defaultInflectParamsForEntry) has to be.
+      comp.role = allComponents && allComponents.some(c => c !== comp && c.type === "verb") ? "object" : "subject";
+    }
+    if (chosenEntry.t === "NOUN" || chosenEntry.t === "NAME") {
+      comp.type = chosenEntry.t === "NAME" ? "name" : "noun";
+      comp.case = comp.case && comp.case !== "nominative" ? comp.case : "nominative";
+      comp.num = comp.num === "plural" ? "plural" : "singular";
+    } else if (chosenEntry.t === "ADJ") {
+      comp.type = "adjective";
+    } else if (chosenEntry.t === "PRON") {
+      comp.type = "pronoun";
+    }
+    // PREP/CONJ/PART/NUM entries have no case-bearing grammar to rebuild —
+    // the word substitution alone (done by the caller) is enough for those.
+  }
+  comp._inflectParams = defaultInflectParamsForEntry(chosenEntry, comp);
+}
+
 function switchVariant(compIdx, variantIdx) {
   let state = window._variantState;
   state.selections[compIdx] = variantIdx;
   let comp = state.components[compIdx];
-  let variants = findVariants(comp._entry);
+  let variants = findVariants(comp._entry, comp._engSource);
   let chosen = variants[variantIdx];
   if (chosen) {
+    if (chosen.t !== comp._entry.t) rebuildComponentForVariant(comp, chosen, state.components);
     comp._entry = chosen;
     comp.word = reInflectEntry(chosen, comp._inflectParams);
   }
@@ -1183,9 +1446,17 @@ function renderEngKesGloss(outputComponents, words, terminalPunct) {
     if (!comp.word || GLOSS_SKIP_TYPES.has(comp.type)) return;
     let isUnknown = comp.type === "unknown" || comp.word.startsWith('[');
     let label = comp._engSource || comp._originalName || (isUnknown ? comp.word.replace(/^\[|\]$/g,'') : comp.word);
-    let variants = comp._entry ? findVariants(comp._entry) : [];
+    let variants = comp._entry ? findVariants(comp._entry, comp._engSource) : [];
+    // Default the dropdown's highlighted option to whichever entry was
+    // ACTUALLY used for this word (comp._entry), not just index 0 — variants
+    // is independently ordered (dictionary array order), so entry 0 there is
+    // not necessarily the one that got picked. Getting this wrong is exactly
+    // the "wrong word showcased that isn't reflected as selected" report:
+    // the dropdown would show a highlighted option that didn't match what the
+    // Kestelál word actually was.
+    let matchedIdx = variants.findIndex(v => v.k === comp._entry?.k && v.t === comp._entry?.t);
     let selIdx = (window._variantState.selections[compIdx] !== undefined)
-      ? window._variantState.selections[compIdx] : 0;
+      ? window._variantState.selections[compIdx] : Math.max(0, matchedIdx);
     glossPairs.push({ eng: label, kes: comp.word, type: comp.type, case: comp.case || null, variants, selIdx, compIdx, isUnknown });
   });
 
@@ -1206,13 +1477,22 @@ function renderEngKesGloss(outputComponents, words, terminalPunct) {
       // Show each variant's INFLECTED form (matching the current grammatical
       // context), not just the bare dictionary key — otherwise the dropdown
       // shows "Kastelál" / "kestelál" instead of the actual "Kastelálúa" / "Kestelalúa".
-      let inflectParams = window._variantState.components[p.compIdx]._inflectParams;
+      // Each candidate gets ITS OWN inflection params based on its own word
+      // type (see defaultInflectParamsForEntry) — reusing the currently
+      // selected word's params for every option would misinflect any
+      // cross-type candidate (e.g. running noun case-inflection over a verb
+      // stem when the list mixes a noun and a verb reading of one phrase).
+      const TYPE_LABELS = { NOUN: "noun", VERB: "verb", ADJ: "adj", NAME: "name", PRON: "pron", PREP: "prep", CONJ: "conj", PART: "part", NUM: "num", ADV: "adv" };
+      let comp = window._variantState.components[p.compIdx];
       let options = p.variants.map((v, vi) => {
-        let displayForm = inflectParams ? reInflectEntry(v, inflectParams) : v.k;
-        return `<option value="${vi}" ${vi === p.selIdx ? 'selected' : ''}>${displayForm}</option>`;
+        let params = defaultInflectParamsForEntry(v, comp);
+        let displayForm = params ? reInflectEntry(v, params) : v.k;
+        let typeLabel = TYPE_LABELS[v.t] || v.t.toLowerCase();
+        return `<option value="${vi}" ${vi === p.selIdx ? 'selected' : ''}>${displayForm} — ${typeLabel}: ${v.e}</option>`;
       }).join('');
       variantSelector = `
         <select onchange="switchVariant(${p.compIdx}, parseInt(this.value))"
+          title="Switch to a different dictionary sense of this word"
           style="margin-top:0.35rem;background:var(--bg4);border:1px solid var(--gold-border);
           border-radius:3px;color:var(--gold-light);font-family:'Cinzel',serif;font-size:0.7rem;
           padding:0.15rem 0.3rem;cursor:pointer;width:100%;text-align:center;">
@@ -1309,6 +1589,25 @@ function doTranslate() {
         if (selIdx >= res.meanings.length) selIdx = 0;
         res.selectedMeaning = res.meanings[selIdx];
         res.meaningIdx = selIdx;
+        if (res.type === "noun" && res.num === "plural") {
+          // See pluralizeEnglish() — the suffix matcher above correctly
+          // detects plural number but always carries the bare singular gloss.
+          res.selectedMeaning = pluralizeEnglish(res.selectedMeaning);
+        }
+        if (selIdx === 0 && res.type === "number") {
+          // Prefer the spelled-out word ("two") over the bare digit ("2") as
+          // the default reading — the digit is still reachable via the
+          // meaning cycler for anyone who wants it.
+          let wordIdx = res.meanings.findIndex(m => !/^\d+$/.test(m));
+          if (wordIdx > 0) { res.selectedMeaning = res.meanings[wordIdx]; res.meaningIdx = wordIdx; }
+        }
+        if (selIdx === 0 && res.type === "particle" && res.base === "fa") {
+          // "fa" glosses as "no, not, negation" — "not" is the far more
+          // useful default reading since it's what actually gets used
+          // grammatically (see the negation handling below).
+          let notIdx = res.meanings.indexOf("not");
+          if (notIdx > 0) { res.selectedMeaning = res.meanings[notIdx]; res.meaningIdx = notIdx; }
+        }
         if (res.type === "adjective" && !res.case) {
           // Adjective tokens don't carry a structured case field the way
           // nouns/pronouns do — analyzeWordMorphology only records it in the
@@ -1353,6 +1652,17 @@ function doTranslate() {
     // side the adjective sat on in the Kestelál source. Adjectives with no
     // qualifying head on either side (predicate/orphan adjectives) are left
     // as standalone tokens exactly as before, still falling into "others".
+    // A postpositive nominative adjective run attaching backward onto a
+    // nominative subject ("Silas atál") is ambiguous on its own — Kestelál
+    // uses the exact same surface order for a bare NP ("the tall son") and
+    // for a predicate-adjective construction with the copula ("the son IS
+    // tall"). When the clause actually contains the copula ("tar"/"tor"/
+    // "tir" = "be, exist"), the predicate reading is the correct one, so the
+    // adjective must NOT be folded into the noun phrase (which would strand
+    // the copula with no complement, e.g. "The tall son is.") — instead it's
+    // carried separately and re-attached after the verb during final
+    // assembly below (see _predAdj).
+    let hasCopula = analyzedTokens.some(t => t.type === "verb" && t.base === "tar");
     let mergedTokens = [];
     let consumed = new Array(analyzedTokens.length).fill(false);
     // Attributive adjectives modify common nouns/names, never bare pronouns
@@ -1429,12 +1739,23 @@ function doTranslate() {
         }));
         for (let k = idx; k <= j; k++) consumed[k] = true;
       } else if (attachBackward) {
-        // English still wants adjective-before-noun order even though the
-        // Kestelál source had it after, so rebuild the already-pushed token
-        // rather than appending after it.
-        mergedTokens[mergedTokens.length - 1] = Object.assign({}, back, {
-          selectedMeaning: adjWords.join(" ") + " " + back.selectedMeaning
-        });
+        if (hasCopula) {
+          // Predicate construction ("Silas atál tar" = "the son IS tall"),
+          // not an attributive NP — keep the noun's own gloss bare and carry
+          // the adjective separately so final assembly can place it after
+          // the copula ("The son is tall") instead of folding it into the
+          // noun phrase and stranding the verb ("The tall son is.").
+          mergedTokens[mergedTokens.length - 1] = Object.assign({}, back, {
+            _predAdj: adjWords.join(" ")
+          });
+        } else {
+          // English still wants adjective-before-noun order even though the
+          // Kestelál source had it after, so rebuild the already-pushed token
+          // rather than appending after it.
+          mergedTokens[mergedTokens.length - 1] = Object.assign({}, back, {
+            selectedMeaning: adjWords.join(" ") + " " + back.selectedMeaning
+          });
+        }
         for (let k = idx; k < j; k++) consumed[k] = true;
       } else {
         // No qualifying head on either side — keep the adjective run standalone.
@@ -1506,11 +1827,102 @@ function doTranslate() {
     }
     mergedTokens = mergedTokens2;
 
-    let subjs = [], vbs = [], prepPhrases = [], looseObjs = [], others = [];
+    // ── Predicate-noun merge pass ───────────────────────────────────────────
+    // Two adjacent bare-nominative noun/name tokens in a clause that has the
+    // copula ("Silas arkes tar" = "the son IS the ruler") are a predicate-
+    // nominative construction, not two stacked subjects — mirrors the
+    // predicate-adjective handling above, but for noun complements. Without
+    // this, both nouns land in `subjs` below and get concatenated as "The
+    // son the ruler is." instead of "The son is the ruler."
+    if (hasCopula) {
+      let predPass = [];
+      let skipNextPN = false;
+      for (let idx = 0; idx < mergedTokens.length; idx++) {
+        if (skipNextPN) { skipNextPN = false; continue; }
+        let t = mergedTokens[idx];
+        let next = mergedTokens[idx + 1];
+        if ((t.type === "noun" || t.type === "name" || t.type === "pronoun") && t.case === "nominative" && !t._hasPossessive &&
+            next && (next.type === "noun" || next.type === "name") && next.case === "nominative" && !next._hasPossessive) {
+          predPass.push(t);
+          predPass.push(Object.assign({}, next, { _predNoun: true }));
+          skipNextPN = true;
+          continue;
+        }
+        predPass.push(t);
+      }
+      mergedTokens = predPass;
+    }
+
+    // ── Negation extraction ─────────────────────────────────────────────────
+    // "fa" ("no, not, negation") sits as a standalone preverbal particle in
+    // Kestelál rather than inflecting the verb. Pull it out here — rather than
+    // letting it fall through the classification loop below unhandled (which
+    // used to silently swallow it and produce an affirmative translation of a
+    // negative sentence) — and apply it as a flag to the verb's English
+    // rendering instead.
+    let clauseNegativeKE = mergedTokens.some(t => t.type === "particle" && t.base === "fa");
+    if (clauseNegativeKE) mergedTokens = mergedTokens.filter(t => !(t.type === "particle" && t.base === "fa"));
+
+    // ── Conjunction merge pass ──────────────────────────────────────────────
+    // "ob" (and) / "be" (or, but) coordinating two noun phrases of the same
+    // case ("Es sila ob sili suvár" = "I help the son AND the daughter") —
+    // without this, the conjunction token has no bucket in the classification
+    // loop below and was silently dropped, leaving the two nouns stranded
+    // next to each other with no connector ("I help the son the daughter").
+    {
+      let conjPass = [];
+      let skipNextConj = false;
+      for (let idx = 0; idx < mergedTokens.length; idx++) {
+        if (skipNextConj) { skipNextConj = false; continue; }
+        let t = mergedTokens[idx];
+        let next = mergedTokens[idx + 1];
+        if (t.type === "conjunction" &&
+            idx > 0 && next &&
+            (next.type === "noun" || next.type === "name" || next.type === "pronoun") &&
+            next.case === conjPass[conjPass.length - 1]?.case) {
+          conjPass.push(Object.assign({}, next, { _conjWord: t.selectedMeaning }));
+          skipNextConj = true;
+          continue;
+        }
+        conjPass.push(t);
+      }
+      mergedTokens = conjPass;
+    }
+
+    // ── Number merge pass ───────────────────────────────────────────────────
+    // A number word immediately before a noun/name ("mus silaan" = "two
+    // sons") is a determiner-like modifier, not an independent word — fold it
+    // into the noun's gloss the same way quantifier-adjectives already are,
+    // instead of leaving it to be silently dropped.
+    {
+      let numPass = [];
+      let skipNextNum = false;
+      for (let idx = 0; idx < mergedTokens.length; idx++) {
+        if (skipNextNum) { skipNextNum = false; continue; }
+        let t = mergedTokens[idx];
+        let next = mergedTokens[idx + 1];
+        if (t.type === "number" && next && (next.type === "noun" || next.type === "name")) {
+          numPass.push(Object.assign({}, next, {
+            selectedMeaning: t.selectedMeaning + " " + next.selectedMeaning,
+            _hasPossessive: true // reuse the existing "don't prepend 'the'" flag — "two sons", not "the two sons"
+          }));
+          skipNextNum = true;
+          continue;
+        }
+        numPass.push(t);
+      }
+      mergedTokens = numPass;
+    }
+
+    let subjs = [], vbs = [], prepPhrases = [], looseObjs = [], others = [], predNouns = [];
 
     // First pass: pair each preposition with the accusative noun/pronoun that follows it
     let skipNext = false;
     mergedTokens.forEach((t, idx) => {
+      if (t._predNoun) {
+        predNouns.push(t);
+        return;
+      }
       if (skipNext) { skipNext = false; return; }
 
       if (t.type === "verb") {
@@ -1605,9 +2017,15 @@ function doTranslate() {
       } else {
         subjPerson = "3sg"; // "It"
       }
+      // A coordinated subject ("the son and the daughter") is always plural
+      // agreement in English regardless of the individual conjuncts' number
+      // ("he and I" → "we help", not "he helps") — the singular-noun check
+      // above only looked at subjs[0], so "the son and the daughter helps
+      // me" was picking up the singular agreement of just the first conjunct.
+      if (subjs.length > 1) subjPerson = "3pl";
 
       // Inflect verb with agreement
-      function inflectAgreed(baseEnglish, time, aspect, person) {
+      function inflectAgreed(baseEnglish, time, aspect, person, negate) {
         const SKIP_PARTS = new Set(["is","are","am","was","were"]);
         let cleaned = baseEnglish.replace(/\bto\s+/gi,'').replace(/,\s*/g,'/');
         const getForms = (v) => {
@@ -1707,6 +2125,48 @@ function doTranslate() {
         };
         let parts = cleaned.split('/').map(p=>p.trim()).filter(p=>!SKIP_PARTS.has(p));
         if (parts.length === 0) parts = ["be"];
+
+        if (negate) {
+          // Special-case the copula ("be"): English negates it directly
+          // rather than with do-support ("is not", never "does not be").
+          if (parts.length === 1 && parts[0] === "be") {
+            if (time === "future") {
+              if (aspect === "simple")     return "will not be";
+              if (aspect === "continuous") return "will not be being";
+              if (aspect === "perfect")    return "will not have been";
+            }
+            if (time === "past") {
+              let beForm = (person === "1sg" || person === "3sg") ? "was" : "were";
+              if (aspect === "simple")     return beForm + " not";
+              if (aspect === "continuous") return beForm + " not being";
+              if (aspect === "perfect")    return "had not been";
+            }
+            let beForm = person === "3sg" ? "is" : person === "1sg" ? "am" : "are";
+            if (aspect === "simple")     return beForm + " not";
+            if (aspect === "continuous") return beForm + " not being";
+            if (aspect === "perfect")    return (person === "3sg" ? "has" : "have") + " not been";
+          }
+          // Ordinary verbs: continuous/perfect already carry an auxiliary in
+          // the affirmative, so negate that auxiliary directly. Simple
+          // aspect has no auxiliary to negate, so it needs do-support
+          // instead of the inflected form ("does not help", never "helps
+          // not") — and the verb after "not" stays in its bare infinitive.
+          if (time === "future") {
+            if (aspect === "simple")     return "will not " + parts.join('/');
+            if (aspect === "continuous") return "will not be " + parts.map(p=>getForms(p).ing).join('/');
+            if (aspect === "perfect")    return "will not have " + parts.map(p=>getForms(p).ppart).join('/');
+          }
+          if (time === "past") {
+            if (aspect === "simple")     return "did not " + parts.join('/');
+            if (aspect === "continuous") return (person==="1sg"||person==="3sg" ? "was" : "were") + " not " + parts.map(p=>getForms(p).ing).join('/');
+            if (aspect === "perfect")    return "had not " + parts.map(p=>getForms(p).ppart).join('/');
+          }
+          if (aspect === "simple")     return (person==="3sg"?"does":"do") + " not " + parts.join('/');
+          if (aspect === "continuous") return (person==="3sg"?"is":person==="1sg"?"am":"are") + " not " + parts.map(p=>getForms(p).ing).join('/');
+          if (aspect === "perfect")    return (person==="3sg"?"has":"have") + " not " + parts.map(p=>getForms(p).ppart).join('/');
+          return cleaned;
+        }
+
         if (time === "future") {
           if (aspect === "simple")     return "will " + parts.join('/');
           if (aspect === "continuous") return "will be " + parts.map(p=>getForms(p).ing).join('/');
@@ -1724,22 +2184,53 @@ function doTranslate() {
         return cleaned;
       }
 
-      let inflectedVerb = inflectAgreed(verbNode.selectedMeaning, verbNode.time || "present", verbNode.aspect || "simple", subjPerson);
+      let inflectedVerb = inflectAgreed(verbNode.selectedMeaning, verbNode.time || "present", verbNode.aspect || "simple", subjPerson, clauseNegativeKE);
 
       let subjectPhrases = subjs.map(s => {
         let text = s.selectedMeaning;
         if (s.type === "noun" && !s._hasPossessive && !text.toLowerCase().startsWith("the ")) text = "the " + text;
+        if (s._conjWord) text = s._conjWord + " " + text;
         return text;
       });
       let objPhrases = looseObjs.map(o => {
         let text = o.selectedMeaning;
         if (o.type === "noun" && !o._hasPossessive && !text.toLowerCase().startsWith("the ")) text = "the " + text;
+        if (o._conjWord) text = o._conjWord + " " + text;
         return text;
       });
 
       let subjStr = subjectPhrases.join(" ") || "It";
-      // Word order: subject + verb + loose objects + prepositional phrases
+      // Predicate adjective(s) carried on the subject via the copula merge
+      // pass above (e.g. "Silas atál tar" → subj carries _predAdj:"tall").
+      let predAdjPhrase = subjs.map(s => s._predAdj).filter(Boolean).join(" ");
+      // Predicate noun(s) from the predicate-noun merge pass above
+      // (e.g. "Silas arkes tar" → "the son is the ruler").
+      let predNounPhrase = predNouns.map(p => {
+        let text = p.selectedMeaning;
+        if (!text.toLowerCase().startsWith("the ")) text = "the " + text;
+        return text;
+      }).join(" ");
+      // Word order: subject + verb + predicate complement + loose objects + prepositional phrases
       let parts = [subjStr, inflectedVerb];
+      if (predAdjPhrase) parts.push(predAdjPhrase);
+      if (predNounPhrase) parts.push(predNounPhrase);
+      // A reflexive-mode verb (see the paradigm's aróth/aráth/aríth etc.
+      // suffixes) carries its reflexivity entirely in the verb form in
+      // Kestelál, with no separate object word — analyzeWordMorphology
+      // already recognizes this correctly (verbNode.mode === "reflexive"),
+      // but it was going no further: nothing downstream ever looked at
+      // `mode`, so "Es suvaróth" ("I helped myself") rendered as the plain,
+      // non-reflexive "I helped." Insert the matching English reflexive
+      // pronoun here, based on the subject person already computed above.
+      if (verbNode.mode === "reflexive") {
+        const REFLEXIVE_BY_PERSON = {
+          "1sg": "myself", "1pl": "ourselves", "2": "yourself", "3pl": "themselves"
+        };
+        let reflexivePronoun = REFLEXIVE_BY_PERSON[subjPerson] ||
+          (subjs[0] && subjs[0].gloss && /she/i.test(subjs[0].gloss) ? "herself" :
+           subjs[0] && subjs[0].gloss && /it\b/i.test(subjs[0].gloss) ? "itself" : "himself");
+        parts.push(reflexivePronoun);
+      }
       if (objPhrases.length > 0) parts.push(objPhrases.join(" "));
       if (prepPhrases.length > 0) parts.push(prepPhrases.join(" "));
       if (others.length > 0) parts.push(others.map(o => o.selectedMeaning).join(" "));
@@ -1801,6 +2292,17 @@ function doTranslate() {
     `;
   } else {
     let words = input.toLowerCase().replace(/[,!?\.;:'"]/g, '').split(/\s+/);
+    // Contractions lose their apostrophe in the strip above ("isn't" → "isnt"),
+    // so expand the common negative contractions back into two words here —
+    // this lets the rest of the parser treat "isnt"/"dont"/etc. exactly like
+    // "is not"/"do not" without needing a separate code path for each.
+    const NEGATIVE_CONTRACTIONS = {
+      "isnt": ["is", "not"], "arent": ["are", "not"], "wasnt": ["was", "not"],
+      "werent": ["were", "not"], "dont": ["do", "not"], "doesnt": ["does", "not"],
+      "didnt": ["did", "not"], "wont": ["will", "not"], "hasnt": ["has", "not"],
+      "havent": ["have", "not"], "hadnt": ["had", "not"]
+    };
+    words = words.flatMap(w => NEGATIVE_CONTRACTIONS[w] || [w]);
     let outputComponents = [];
     let i = 0;
     
@@ -1808,10 +2310,30 @@ function doTranslate() {
     let clauseTime = "present";
     let clauseAspect = "simple";
     let clauseReflexive = false;
+    // Set when "not" (or an expanded contraction above) appears anywhere in
+    // the clause. Kestelál marks negation with a preverbal particle ("fa"),
+    // not by inflecting the verb, so rather than tracking exactly where "not"
+    // sat in the English sentence, we just flag the whole clause as negative
+    // and prefix the particle onto whichever verb ends up being pushed (see
+    // the end of this branch, right before renderEngKesGloss is called).
+    let clauseNegative = false;
     let nextIsIndefinite = false;
     let nextIsDefinite = false;
     let nextIsGenitive = false;
     let nextIsInstrumental = false;
+    // Set true immediately after a copula ("is"/"was"/"will be") is pushed, and
+    // consumed by the very next noun/name/pronoun that follows (surviving through
+    // an intervening possessive determiner like "my", the same way nextIsDefinite
+    // does). A predicate complement after a copula ("The son IS the king") is not
+    // a direct object of a transitive verb, so it must stay in the SUBJECT's case
+    // (nominative) rather than falling into the generic `hasVerb ? "object" :
+    // "subject"` heuristic used everywhere else, which would otherwise mark it
+    // accusative just because a verb happened to already appear in the clause.
+    let copulaPending = false;
+    // "and"/"or"/"but" between two noun phrases — see the Conjunction
+    // intercept below for how this gets set, and the NOUN/PRON/proper-noun
+    // push sites for how it gets consumed and attached.
+    let pendingConjWord = null;
     let isEnglishPlural = false; // persists across iterations so quantifiers like "all" propagate
     let quantifierPluralPending = false; // set by "all"/"every"/"each", consumed by next noun
 
@@ -1850,6 +2372,33 @@ function doTranslate() {
     while (i < words.length) {
       let token = words[i];
 
+      // "do"/"does"/"did" + "not" + [a resolvable verb] is just negated
+      // do-support with no independent meaning of its own ("I do not help" /
+      // "I did not help") — without this check, "do" would get matched
+      // against the dictionary as the ordinary verb "narár" ("to do, make,
+      // perform") and become the (wrong) main verb of the sentence, pushing
+      // the real verb "help" out entirely. Consume both words and just set
+      // clauseTime/clauseNegative so the following verb parses normally.
+      if ((token === "do" || token === "does" || token === "did") && words[i + 1] === "not" &&
+          words[i + 2] && resolveVerbToken(words[i + 2])) {
+        clauseNegative = true;
+        clauseTime = token === "did" ? "past" : "present";
+        i += 2;
+        continue;
+      }
+      // Plain "not" (or an expanded contraction like "isnt"→"is not"), not
+      // part of a do-support pair above — e.g. "The son is not tall", "I am
+      // not tall", "The son will not help". Kestelál marks negation with a
+      // single preverbal particle rather than inflecting the verb itself, so
+      // we don't need to know exactly where "not" sits — just flag the whole
+      // clause and attach the particle to the verb once it's known, at the
+      // end of this branch.
+      if (token === "not") {
+        clauseNegative = true;
+        i++;
+        continue;
+      }
+
       let matchedEntry = null;
       let matchLength = 0;
       isEnglishPlural = quantifierPluralPending; // inherit quantifier-plural; will also be set by suffix detection
@@ -1877,10 +2426,20 @@ function doTranslate() {
       if (!matchedEntry) for (let len = Math.min(5, words.length - i); len >= 1; len--) {
         let subPhrase = words.slice(i, i + len).join(" ");
         let normalizedPhrase = subPhrase.replace(/\s+\/\s+/g, "/");
-        let found = findWordByEnglishPhrase(subPhrase) || findWordByEnglishPhrase(normalizedPhrase);
-        if (found) {
-          matchedEntry = found;
+        let allCandidates = findAllWordsByEnglishPhrase(subPhrase);
+        if (allCandidates.length === 0) allCandidates = findAllWordsByEnglishPhrase(normalizedPhrase);
+        if (allCandidates.length > 0) {
           matchLength = len;
+          // Cross-type homonyms (e.g. "fall" = audal/VERB or akúras/NOUN) — pick
+          // a context-sensible default. This can still guess wrong (it's a
+          // heuristic, not a parser), which is what the variant dropdown in
+          // the Word Gloss cards below is for — see the findVariants rewrite,
+          // which now offers this exact same candidate set for switching.
+          matchedEntry = pickBestEnglishCandidate(allCandidates, {
+            precededByDeterminer: nextIsDefinite || nextIsIndefinite || nextIsGenitive,
+            hasVerbAlready: hasVerb,
+            followedByCopula: ["is", "are", "was", "were", "am"].includes(words[i + len])
+          });
           break;
         }
       }
@@ -2010,6 +2569,7 @@ function doTranslate() {
         } else {
           // Future simple copula: "will be" → tir
           hasVerb = true;
+          copulaPending = true;
           outputComponents.push({ type: "verb", word: "tir", _engSource: "will be", _isCopula: true });
           i += 2;
           continue;
@@ -2041,6 +2601,7 @@ function doTranslate() {
           clauseTime = "present"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
         } else {
           hasVerb = true;
+          copulaPending = true;
           outputComponents.push({ type: "verb", word: "tar", _engSource: token, _isCopula: true });
           i++;
           continue;
@@ -2050,6 +2611,7 @@ function doTranslate() {
           clauseTime = "past"; clauseAspect = "continuous"; verbToken = words[i+1]; skipCount = 2; isVerbChain = true;
         } else {
           hasVerb = true;
+          copulaPending = true;
           outputComponents.push({ type: "verb", word: "tor", _engSource: token, _isCopula: true });
           i++;
           continue;
@@ -2086,7 +2648,21 @@ function doTranslate() {
       }
 
       if (matchedEntry) {
-        let role = hasVerb ? "object" : "subject";
+        // A predicate complement right after a copula is not a transitive
+        // object — see the copulaPending declaration above.
+        let role = (hasVerb && !copulaPending) ? "object" : "subject";
+
+        // ── Conjunction intercept ────────────────────────────────────────────────
+        // "and"/"or"/"but" (dictionary "ob"/"be") coordinate two noun phrases —
+        // they have no case or role of their own. Stash the Kestelál word and
+        // attach it to whichever noun/pronoun/name gets pushed next (see the
+        // pendingConjWord uses in the NOUN/PRON/proper-noun branches below),
+        // rather than letting it silently fall through unused.
+        if (matchedEntry.t === "CONJ") {
+          pendingConjWord = matchedEntry.k;
+          i += matchLength;
+          continue;
+        }
 
         // ── Quantifier-adjective intercept ──────────────────────────────────────
         // Words like "all", "every", "each" that match a dict entry (e.g. gol = all)
@@ -2164,12 +2740,15 @@ function doTranslate() {
             role = "object";
             assignedCase = "accusative";
           }
-          outputComponents.push({ type: "pronoun", role: role, word: finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: assignedCase, _entry: matchedEntry, _inflectParams: { type: "pronoun", role }, _engSource: words.slice(i, i + matchLength).join(" ") });
+          outputComponents.push({ type: "pronoun", role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: assignedCase, _entry: matchedEntry, _inflectParams: { type: "pronoun", role }, _engSource: words.slice(i, i + matchLength).join(" ") });
+          pendingConjWord = null;
           nextIsIndefinite = false;
-          // Don't clear nextIsDefinite here when THIS pronoun is the one that
-          // just set it (a possessive like "my") — it needs to survive to be
-          // read by the noun that comes right after it, on the next token.
-          if (matchedEntry.case !== "genitive") nextIsDefinite = false;
+          // Don't clear nextIsDefinite (or copulaPending) here when THIS pronoun
+          // is the one that just set it (a possessive like "my") — it needs to
+          // survive to be read by the noun that comes right after it, on the
+          // next token (e.g. "The son is MY king" → copulaPending must still
+          // apply to "king", not just to "my").
+          if (matchedEntry.case !== "genitive") { nextIsDefinite = false; copulaPending = false; }
           nextIsGenitive = false;
         } else if (matchedEntry.t === "NOUN" || matchedEntry.t === "NAME") {
           let isPlural = isEnglishPlural || (words[i + matchLength - 1].endsWith('s') && !matchedEntry.e.toLowerCase().includes(words[i + matchLength - 1]));
@@ -2227,6 +2806,7 @@ function doTranslate() {
           nextIsDefinite = false;
           nextIsGenitive = false;
           nextIsInstrumental = false;
+          copulaPending = false;
           isEnglishPlural = false; quantifierPluralPending = false; // reset after consuming the plural flag
 
           // Only apply the general accusative/nominative inflection if the case hasn't
@@ -2256,7 +2836,8 @@ function doTranslate() {
               }
             }
           }
-          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k, case: targetCase, _entry: matchedEntry, _inflectParams: { type: "noun", targetCase, isPlural, cls }, _engSource: words.slice(i, i + matchLength).join(" ") });
+          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k, case: targetCase, _entry: matchedEntry, _inflectParams: { type: "noun", targetCase, isPlural, cls }, _engSource: words.slice(i, i + matchLength).join(" ") });
+          pendingConjWord = null;
         } else if (matchedEntry.t === "VERB") {
           hasVerb = true;
           let stem = matchedEntry.k.replace(/ár$|ar$/, '');
@@ -2272,12 +2853,28 @@ function doTranslate() {
           let isPast = clauseTime === "past" ||
                        token.endsWith("ed") || token.endsWith("ied") ||
                        KNOWN_PAST_FORMS_V.has(token);
-          let suffix = isPast ? "ór" : clauseTime === "future" ? "ír" : "ár";
+          // A reflexive pronoun ("myself"/"yourself"/etc.) right after a simple
+          // (non-auxiliary-chain) verb marks the verb itself reflexive in
+          // Kestelál (see the paradigm's reflexive mode) rather than being a
+          // separate object word — this mirrors the isVerbChain handling
+          // above, which only covered auxiliary constructions ("will help
+          // myself"), leaving plain "helped myself" to fall through to the
+          // generic pronoun matcher and pick up the unrelated "sedda" ("these
+          // / myself" homonym) as a bare, wrongly-cased object instead.
+          const REFLEXIVE_WORDS = new Set(["myself", "yourself", "himself", "herself", "itself", "ourselves", "themselves"]);
+          let reflexiveHere = REFLEXIVE_WORDS.has(words[i + matchLength]);
+          let suffix;
+          if (reflexiveHere) {
+            suffix = isPast ? "aróth" : clauseTime === "future" ? "aríth" : "aráth";
+          } else {
+            suffix = isPast ? "ór" : clauseTime === "future" ? "ír" : "ár";
+          }
           // The copula verb ("tar" = be/exist) takes a predicate adjective that
           // describes the SUBJECT, never an object — flag it so the adjective
           // branch below can tell the difference from a transitive verb.
           let isCopulaEntry = matchedEntry.k.toLowerCase() === "tar";
-          outputComponents.push({ type: "verb", word: stem + suffix, _entry: matchedEntry, _inflectParams: { type: "verb", suffix }, _engSource: words.slice(i, i + matchLength).join(" "), _isCopula: isCopulaEntry });
+          outputComponents.push({ type: "verb", word: stem + suffix, _entry: matchedEntry, _inflectParams: { type: "verb", suffix }, _engSource: words.slice(i, i + matchLength + (reflexiveHere?1:0)).join(" "), _isCopula: isCopulaEntry });
+          if (reflexiveHere) matchLength++;
         } else if (matchedEntry.t === "ADJ") {
           // ── Quantifier intercept for ADJ-type entries (e.g. gol = "all") ──────
           // These act as quantifier adjectives that co-inflect with the following noun.
@@ -2376,13 +2973,17 @@ function doTranslate() {
           let precededByPrep = outputComponents.length > 0 && outputComponents[outputComponents.length - 1].type === "preposition";
           let prepComp = precededByPrep ? outputComponents[outputComponents.length - 1] : null;
           let prepGoverns = prepComp ? (prepComp._governsCase || "accusative") : null;
-          let role = (hasVerb || precededByPrep) ? "object" : "subject";
+          // A predicate complement right after a copula ("That is Jonas") is not
+          // a transitive object — see the copulaPending declaration above.
+          let afterCopula = copulaPending && !precededByPrep;
+          let role = (hasVerb && !afterCopula || precededByPrep) ? "object" : "subject";
           if (nextIsInstrumental || (precededByPrep && prepGoverns === "instrumental")) role = "instrumental";
           if (nextIsGenitive) role = "genitive";
           if (precededByPrep) role = prepGoverns === "instrumental" ? "instrumental" : "object";
 
           let targetCase = nextIsGenitive ? "genitive"
             : (nextIsInstrumental || (precededByPrep && prepGoverns === "instrumental")) ? "instrumental"
+            : (afterCopula) ? "nominative"
             : (hasVerb || precededByPrep) ? "accusative"
             : "nominative";
 
@@ -2429,14 +3030,16 @@ function doTranslate() {
           }
 
           outputComponents.push({
-            type: "name", role: role, word: inflected,
+            type: "name", role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + inflected,
             num: isPluralPN ? "plural" : "singular",
             case: targetCase, _passthrough: true, _originalName: singularName,
             _engSource: rawWord
           });
+          pendingConjWord = null;
           isEnglishPlural = false; quantifierPluralPending = false;
           nextIsIndefinite = false; nextIsDefinite = false;
           nextIsGenitive = false; nextIsInstrumental = false;
+          copulaPending = false;
           i++; continue;
         }
       }
@@ -2644,6 +3247,15 @@ function doTranslate() {
     // finalOrder build used to live here but was dead code — its result was never
     // read — so it has been removed to avoid the two copies drifting out of sync.
 
+    // Negation: Kestelál marks it with the preverbal particle "fa" rather than
+    // inflecting the verb, so attach it directly to whichever verb component
+    // ended up in the output — this keeps renderEngKesGloss's word-order logic
+    // (which only knows about a single "verb" slot) untouched.
+    if (clauseNegative) {
+      let verbComp = outputComponents.find(c => c.type === "verb");
+      if (verbComp) verbComp.word = "fa " + verbComp.word;
+    }
+
     window._lastOutputComponents = outputComponents;
 
     // Store state for variant switching, then render
@@ -2815,6 +3427,7 @@ function doDeclension() {
   }
 
   box.innerHTML = `
+    <div class="table-scroll">
     <table>
       <thead><tr><th>Case</th><th>Singular</th><th>Plural</th></tr></thead>
       <tbody>
@@ -2824,6 +3437,7 @@ function doDeclension() {
         <tr><td class="td-kas">Instrumental</td>${cell('insSing',merged.insSing)} ${cell('insPlur',merged.insPlur)}</tr>
       </tbody>
     </table>
+    </div>
   `;
 }
 
@@ -2845,6 +3459,7 @@ function doConjugate() {
   let stem = v.replace(/ár$|ar$/, '');
 
   box.innerHTML = `
+    <div class="table-scroll">
     <table>
       <thead>
         <tr>
@@ -2893,6 +3508,7 @@ function doConjugate() {
         </tr>
       </tbody>
     </table>
+    </div>
   `;
 }
 
