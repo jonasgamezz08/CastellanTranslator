@@ -1529,23 +1529,13 @@ function renderEngKesGloss(outputComponents, words, terminalPunct) {
 // (e.g. pon: "against" → "contrary to" → "versus" → back to "against").
 // Persists the choice in window._kesEngMeaningState and re-runs the translation
 // so the Final Translation sentence picks up the newly selected meaning.
-function cycleMeaning(tokenIdx, direction) {
+function selectMeaning(tokenIdx, meaningIdx) {
   let state = window._kesEngMeaningState;
   if (!state) return;
   let input = document.getElementById('translate-input').value.trim();
   if (state.sourceInput !== input) return; // stale click guard
 
-  let tokens = input.split(/\s+/);
-  let tok = tokens[tokenIdx];
-  if (tok === undefined) return;
-  let res = analyzeWordMorphology(tok, tokens, tokenIdx);
-  if (!res) return;
-  let meanings = res.gloss.split(/,\s*/).map(m => m.trim()).filter(Boolean);
-  if (meanings.length === 0) meanings = [res.gloss];
-
-  let current = state.selections[tokenIdx] !== undefined ? state.selections[tokenIdx] : 0;
-  let next = (current + direction + meanings.length) % meanings.length;
-  state.selections[tokenIdx] = next;
+  state.selections[tokenIdx] = meaningIdx;
 
   doTranslate();
 }
@@ -2264,27 +2254,26 @@ function doTranslate() {
           let selectedMeaning = res ? res.selectedMeaning : tok;
           let hasAlternates = !isUnknown && meanings.length > 1;
 
-          // Compact meaning cycler: ‹ meaning › with a small index counter.
-          // Styled in amber/gold (NOT green) so it reads as a distinct, secondary
-          // control rather than competing with the Kestelál word itself.
-          let meaningCycler = hasAlternates ? `
-            <div style="display:flex;align-items:center;justify-content:center;gap:0.3rem;margin-top:0.25rem;">
-              <button onclick="cycleMeaning(${idx}, -1)" aria-label="Previous meaning"
-                style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:0.85rem;
-                line-height:1;padding:0 0.15rem;font-family:serif;transition:color 0.15s;"
-                onmouseover="this.style.color='var(--amber-light)'" onmouseout="this.style.color='var(--amber)'">‹</button>
-              <span style="font-size:0.65rem;color:var(--amber);font-family:'JetBrains Mono',monospace;letter-spacing:0.03em;min-width:1.6rem;text-align:center;">${res.meaningIdx + 1}/${meanings.length}</span>
-              <button onclick="cycleMeaning(${idx}, 1)" aria-label="Next meaning"
-                style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:0.85rem;
-                line-height:1;padding:0 0.15rem;font-family:serif;transition:color 0.15s;"
-                onmouseover="this.style.color='var(--amber-light)'" onmouseout="this.style.color='var(--amber)'">›</button>
-            </div>` : '';
+          // Meaning picker: a dropdown listing every alternate meaning for
+          // this word, so the person can jump straight to the one they want
+          // instead of clicking through them one at a time. Styled in amber/
+          // gold (NOT green) so it reads as a distinct, secondary control
+          // rather than competing with the Kestelál word itself.
+          let meaningPicker = hasAlternates ? `
+            <select onchange="selectMeaning(${idx}, parseInt(this.value))"
+              aria-label="Choose a meaning for this word"
+              title="Choose a meaning for this word"
+              style="margin-top:0.3rem;background:var(--bg4);border:1px solid var(--gold-border);
+              border-radius:3px;color:var(--gold-light);font-family:'Cinzel',serif;font-size:0.7rem;
+              padding:0.15rem 0.3rem;cursor:pointer;width:100%;text-align:center;">
+              ${meanings.map((m, mi) => `<option value="${mi}" ${mi === res.meaningIdx ? 'selected' : ''}>${m}</option>`).join('')}
+            </select>` : '';
 
           return `<div style="display:flex;flex-direction:column;align-items:center;text-align:center;background:rgba(255,255,255,0.03);border:1px solid ${hasAlternates ? 'var(--gold-border)' : 'var(--border)'};border-radius:var(--radius);padding:0.5rem 0.75rem;min-width:60px;">
             <span class="kes-script-sm" style="display:block;">${tok}</span>
             <span style="font-family:'Cinzel',serif;font-size:0.9rem;color:var(--green-light);margin-top:0.15rem;">${tok}</span>
             <span style="font-size:0.8rem;color:var(--text-dim);font-style:italic;margin-top:0.2rem;">${selectedMeaning}</span>
-            ${meaningCycler}
+            ${meaningPicker}
           </div>`;
         }).join('')}
       </div>
