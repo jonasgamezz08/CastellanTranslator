@@ -538,8 +538,8 @@ td {
   <div class="card">
     <div class="card-title">Direction of Translation</div>
     <div class="direction-row">
-      <label><input type="radio" name="direction" value="kes-eng" checked> Kestelál → English</label>
-      <label><input type="radio" name="direction" value="eng-kes"> English → Kestelál</label>
+      <label><input type="radio" name="direction" value="kes-eng"> Kestelál → English</label>
+      <label><input type="radio" name="direction" value="eng-kes" checked> English → Kestelál</label>
     </div>
     <textarea id="translate-input" placeholder="Enter text... (Try: 'Myp on sutír' or 'Meep / The Light Incarnate will save/guard/protect us.')"></textarea>
     <button class="btn" style="margin-top:0.7rem" onclick="doTranslate()">Translate</button>
@@ -1692,6 +1692,17 @@ function doTranslate() {
         j++;
       }
 
+      // English quantifiers ("all"/"every"/"each"/"any"/"no"/"both"/"either"/
+      // "neither"/"some") don't take "the" on the noun they modify ("all
+      // sons", never "the all sons") the way an ordinary attributive
+      // adjective does ("the tall son") — flag it here so the merge below
+      // can suppress the noun's usual "the" prefix. Reuses the same
+      // _hasPossessive flag the possessive-pronoun and number merges below
+      // already use for the identical purpose (every place that flag is
+      // read just means "don't prepend 'the'").
+      const QUANTIFIER_WORDS = new Set(["all", "every", "each", "any", "no", "both", "either", "neither", "some"]);
+      let isQuantifierRun = adjWords.some(w => QUANTIFIER_WORDS.has(w.toLowerCase()));
+
       let fwd = analyzedTokens[j]; // token right after the adjective run
       // A preceding subject noun is only a valid backward-attachment target
       // if it's the token we most recently pushed to mergedTokens (i.e. it's
@@ -1726,7 +1737,8 @@ function doTranslate() {
 
       if (attachForward) {
         mergedTokens.push(Object.assign({}, fwd, {
-          selectedMeaning: adjWords.join(" ") + " " + fwd.selectedMeaning
+          selectedMeaning: adjWords.join(" ") + " " + fwd.selectedMeaning,
+          _hasPossessive: fwd._hasPossessive || isQuantifierRun
         }));
         for (let k = idx; k <= j; k++) consumed[k] = true;
       } else if (attachBackward) {
@@ -1744,7 +1756,8 @@ function doTranslate() {
           // Kestelál source had it after, so rebuild the already-pushed token
           // rather than appending after it.
           mergedTokens[mergedTokens.length - 1] = Object.assign({}, back, {
-            selectedMeaning: adjWords.join(" ") + " " + back.selectedMeaning
+            selectedMeaning: adjWords.join(" ") + " " + back.selectedMeaning,
+            _hasPossessive: back._hasPossessive || isQuantifierRun
           });
         }
         for (let k = idx; k < j; k++) consumed[k] = true;
@@ -2183,12 +2196,42 @@ function doTranslate() {
         if (s._conjWord) text = s._conjWord + " " + text;
         return text;
       });
-      let objPhrases = looseObjs.map(o => {
+      // Group looseObjs into recipient/theme "clusters": an item with
+      // _conjWord ("and X") is a continuation of whichever item came right
+      // before it, not a new standalone object — so "book, son, [and]
+      // daughter" is really two clusters, [book] and [son and daughter], not
+      // three separate objects. This is what lets a ditransitive sentence
+      // with a coordinated recipient ("give the book to the son and the
+      // daughter") come out right: without grouping, the mere presence of
+      // "and" anywhere among the objects would (or wouldn't) block the "to"
+      // logic below for the WRONG reason — it needs to know coordination
+      // happened WITHIN a cluster, not merely somewhere in the object list.
+      let objClusters = [];
+      looseObjs.forEach(o => {
         let text = o.selectedMeaning;
         if (o.type === "noun" && !o._hasPossessive && !text.toLowerCase().startsWith("the ")) text = "the " + text;
-        if (o._conjWord) text = o._conjWord + " " + text;
-        return text;
+        if (o._conjWord && objClusters.length > 0) {
+          objClusters[objClusters.length - 1].push(o._conjWord + " " + text);
+        } else {
+          objClusters.push([text]);
+        }
       });
+      // Two bare accusative objects with nothing coordinating them ("Es buka
+      // sila adár" — book, son, both plain accusative, no "ob"/"and" between
+      // them) is Kestelál's way of marking a ditransitive verb's direct +
+      // indirect object ("I give the book [to] the son") — the case system
+      // doesn't distinguish which is which any further than word order, so
+      // without this the second object was just stranding next to the first
+      // with no connector at all ("I give the book the son"). This applies
+      // per CLUSTER, so a coordinated recipient ("the son and the daughter")
+      // still gets exactly one "to", not one per name, and a genuine 3-way
+      // list with only one cluster (no separate direct object at all) is
+      // left alone.
+      if (objClusters.length > 1) {
+        objClusters = objClusters.map((cluster, ci) => ci === 0 ? cluster : cluster.map((t, ti) => ti === 0 ? "to " + t : t));
+      }
+      let objPhrases = objClusters.map(cluster => cluster.join(" "));
+
 
       let subjStr = subjectPhrases.join(" ") || "It";
       // Predicate adjective(s) carried on the subject via the copula merge
@@ -2325,6 +2368,16 @@ function doTranslate() {
     // intercept below for how this gets set, and the NOUN/PRON/proper-noun
     // push sites for how it gets consumed and attached.
     let pendingConjWord = null;
+    // A number word ("mus" = two) matched in the eng-kes direction — same
+    // pattern as pendingConjWord: consumed here, then prefixed onto whichever
+    // noun/name/pronoun gets pushed next. Without this, NUM entries fell
+    // through every branch of the type dispatch below (there's no "number"
+    // case), landed in the type:"other" catch-all, and were silently
+    // dropped by renderEngKesGloss — which only ever collects components by
+    // role (subject/object/instrumental/genitive) or type ("verb"/
+    // "adjective"); "other" has no bucket at all. So "Two sons help me" was
+    // coming out as "Silaa en suvár" — plural "sons", but "two" just gone.
+    let pendingNumWord = null;
     let isEnglishPlural = false; // persists across iterations so quantifiers like "all" propagate
     let quantifierPluralPending = false; // set by "all"/"every"/"each", consumed by next noun
 
@@ -2655,6 +2708,16 @@ function doTranslate() {
           continue;
         }
 
+        // ── Number intercept ─────────────────────────────────────────────────────
+        // "two"/"three"/etc. (dictionary NUM entries) sit directly before the
+        // noun they count, uninflected — same treatment as pendingConjWord
+        // above, and the Kes→Eng number-merge pass this mirrors.
+        if (matchedEntry.t === "NUM") {
+          pendingNumWord = matchedEntry.k;
+          i += matchLength;
+          continue;
+        }
+
         // ── Quantifier-adjective intercept ──────────────────────────────────────
         // Words like "all", "every", "each" that match a dict entry (e.g. gol = all)
         // should function as ADJECTIVES that co-inflect with the following noun,
@@ -2731,8 +2794,9 @@ function doTranslate() {
             role = "object";
             assignedCase = "accusative";
           }
-          outputComponents.push({ type: "pronoun", role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: assignedCase, _entry: matchedEntry, _inflectParams: { type: "pronoun", role }, _engSource: words.slice(i, i + matchLength).join(" ") });
+          outputComponents.push({ type: "pronoun", role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + (pendingNumWord ? pendingNumWord + " " : "") + finalPron, num: matchedEntry.num || "singular", _base: matchedEntry.k, case: assignedCase, _entry: matchedEntry, _inflectParams: { type: "pronoun", role }, _engSource: words.slice(i, i + matchLength).join(" ") });
           pendingConjWord = null;
+          pendingNumWord = null;
           nextIsIndefinite = false;
           // Don't clear nextIsDefinite (or copulaPending) here when THIS pronoun
           // is the one that just set it (a possessive like "my") — it needs to
@@ -2827,8 +2891,9 @@ function doTranslate() {
               }
             }
           }
-          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k, case: targetCase, _entry: matchedEntry, _inflectParams: { type: "noun", targetCase, isPlural, cls }, _engSource: words.slice(i, i + matchLength).join(" ") });
+          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + (pendingNumWord ? pendingNumWord + " " : "") + inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k, case: targetCase, _entry: matchedEntry, _inflectParams: { type: "noun", targetCase, isPlural, cls }, _engSource: words.slice(i, i + matchLength).join(" ") });
           pendingConjWord = null;
+          pendingNumWord = null;
         } else if (matchedEntry.t === "VERB") {
           hasVerb = true;
           let stem = matchedEntry.k.replace(/ár$|ar$/, '');
@@ -2944,8 +3009,30 @@ function doTranslate() {
         i++; continue;
       }
 
-      // Quantifiers: "all", "every", "each" — mark the next noun token as plural
+      // Quantifiers: "all", "every", "each" — Kestelál only has one lexical
+      // quantifier ("gol" = all), which "every" and "each" also map onto
+      // (there's no separate word for them). This handles "every"/"each"
+      // specifically: since the dictionary's own gloss for "gol" is just
+      // "all", the generic phrase-matcher earlier in this loop never finds a
+      // match for "every"/"each" text, so matchedEntry stays null and we
+      // never even reach the quantifier-adjective intercept above — this
+      // used to mean "every"/"each" silently vanished from the output
+      // entirely (only their plural-forcing side effect survived), e.g.
+      // "Every son helps me" → "Silaa en suvár" with no "every"/"all" at all.
       if (token === "all" || token === "every" || token === "each") {
+        let quantEntry = findWordByEnglishPhrase("all", "ADJ");
+        if (quantEntry) {
+          outputComponents.push({
+            type: "adjective",
+            word: quantEntry.k,
+            _entry: quantEntry,
+            _inflectParams: { type: "adj", subjectIsPlural: true },
+            _isQuantifier: true,
+            _quantifierPending: true,
+            _modifies: hasVerb ? "object" : "subject",
+            _engSource: token
+          });
+        }
         quantifierPluralPending = true; // force plural on next noun
         isEnglishPlural = true;
         i++; continue;
@@ -3021,12 +3108,13 @@ function doTranslate() {
           }
 
           outputComponents.push({
-            type: "name", role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + inflected,
+            type: "name", role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + (pendingNumWord ? pendingNumWord + " " : "") + inflected,
             num: isPluralPN ? "plural" : "singular",
             case: targetCase, _passthrough: true, _originalName: singularName,
             _engSource: rawWord
           });
           pendingConjWord = null;
+          pendingNumWord = null;
           isEnglishPlural = false; quantifierPluralPending = false;
           nextIsIndefinite = false; nextIsDefinite = false;
           nextIsGenitive = false; nextIsInstrumental = false;
