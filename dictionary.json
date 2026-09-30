@@ -288,7 +288,7 @@
   {
     "k": "tapsár",
     "t": "VERB",
-    "e": "dress elegantly, sum up, embellish, adorn"
+    "e": "to dress, to dress elegantly, to sum up, to embellish, to adorn"
   },
   {
     "k": "angár",
@@ -661,6 +661,21 @@
     "e": "to enchant, to empower, to improve"
   },
   {
+    "k": "ahenáris",
+    "t": "NOUN",
+    "e": "medicine, medicinal practice"
+  },
+  {
+    "k": "ahéndas",
+    "t": "NOUN",
+    "e": "doctor, healer"
+  },
+  {
+    "k": "ahénes",
+    "t": "NOUN",
+    "e": "medicine, remedy, cure"
+  },
+  {
     "k": "ahénil",
     "t": "ADJ",
     "e": "enchanted, empowered, improved, thankful, glad"
@@ -669,6 +684,11 @@
     "k": "aheníles",
     "t": "NOUN",
     "e": "enchantment, potion"
+  },
+  {
+    "k": "ahnaríl",
+    "t": "ADJ",
+    "e": "medical, healing"
   },
   {
     "k": "ailár",
@@ -739,6 +759,11 @@
     "k": "Aléres",
     "t": "NAME",
     "e": "Alerre"
+  },
+  {
+    "k": "algus",
+    "t": "NOUN",
+    "e": "autumn, fall"
   },
   {
     "k": "anadár",
@@ -834,6 +859,11 @@
     "k": "ansár",
     "t": "VERB",
     "e": "to be"
+  },
+  {
+    "k": "ansulár",
+    "t": "VERB",
+    "e": "to heal, to revive, to return to life"
   },
   {
     "k": "Aránas",
@@ -1086,6 +1116,21 @@
     "e": "noisy, loud, strident, obnoxious, annoying"
   },
   {
+    "k": "baralaktár",
+    "t": "VERB",
+    "e": "to strike down with lighting, to bring down"
+  },
+  {
+    "k": "baraláktos",
+    "t": "NOUN",
+    "e": "lightning strike"
+  },
+  {
+    "k": "barálas",
+    "t": "NOUN",
+    "e": "lightning"
+  },
+  {
     "k": "barát",
     "t": "ADJ",
     "e": "fiery, burning, ablaze"
@@ -1124,6 +1169,11 @@
     "k": "barét",
     "t": "NOUN",
     "e": "storyteller, preacher, priest"
+  },
+  {
+    "k": "baréthas",
+    "t": "NOUN",
+    "e": "priesthood"
   },
   {
     "k": "Basáras",
@@ -1228,12 +1278,17 @@
   {
     "k": "biritus",
     "t": "NOUN",
-    "e": "ritual burning or pyre performed during festivities or religious ceremonies"
+    "e": "ritual burning, ritual pyre"
   },
   {
     "k": "biros",
     "t": "NOUN",
     "e": "pyromancy"
+  },
+  {
+    "k": "birsár",
+    "t": "VERB",
+    "e": "to purify, to cleanse, to clear"
   },
   {
     "k": "birtút",
@@ -1254,6 +1309,11 @@
     "k": "boros",
     "t": "NOUN",
     "e": "north, Septentrio"
+  },
+  {
+    "k": "bras",
+    "t": "NOUN",
+    "e": "ash"
   },
   {
     "k": "bukas",
@@ -1696,6 +1756,16 @@
     "e": "false, untrue, negative"
   },
   {
+    "k": "falas",
+    "t": "NOUN",
+    "e": "liar, lie, false hope, scam, misdirection, mirage"
+  },
+  {
+    "k": "falasíl",
+    "t": "ADJ",
+    "e": "naive, gullible"
+  },
+  {
     "k": "falkár",
     "t": "VERB",
     "e": "to betray, to lie to, to be disloyal or unfaithful"
@@ -1966,9 +2036,14 @@
     "e": "co-prince, co-ruler, consul"
   },
   {
-    "k": "galeth",
+    "k": "galéth",
     "t": "NOUN",
     "e": "cereal, grain, wheat"
+  },
+  {
+    "k": "galíth",
+    "t": "NOUN",
+    "e": "spring"
   },
   {
     "k": "gamédis",
@@ -2765,6 +2840,11 @@
     "k": "kotas",
     "t": "NOUN",
     "e": "hit, wound, harm, attack"
+  },
+  {
+    "k": "kotákus",
+    "t": "NOUN",
+    "e": "scar, canyon"
   },
   {
     "k": "kotekátus",
@@ -4752,6 +4832,11 @@
     "e": "Sikyas"
   },
   {
+    "k": "silámes",
+    "t": "NOUN",
+    "e": "birthplace, place of origin, spawn, source, fountain, hatch"
+  },
+  {
     "k": "silár",
     "t": "VERB",
     "e": "to give birth, to give life"
@@ -5027,6 +5112,11 @@
     "e": "heart, hearth, motor, engine"
   },
   {
+    "k": "sulvorát",
+    "t": "NOUN",
+    "e": "doctor, healer"
+  },
+  {
     "k": "sumár",
     "t": "VERB",
     "e": "to learn, to study, to apprehend"
@@ -5134,7 +5224,7 @@
   {
     "k": "tagus",
     "t": "NOUN",
-    "e": "ice"
+    "e": "ice, winter"
   },
   {
     "k": "tagos",
@@ -5914,6 +6004,11 @@
     "k": "venár",
     "t": "VERB",
     "e": "to found, to inaugurate, to remake"
+  },
+  {
+    "k": "venéras",
+    "t": "NOUN",
+    "e": "inauguration, foundation, opening, beginning"
   },
   {
     "k": "vepasúnas",
