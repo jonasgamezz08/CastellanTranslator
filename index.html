@@ -1181,7 +1181,17 @@ function reInflectEntry(entry, inflectParams) {
     }
     // Genitive inflection
     if (p.targetCase === "genitive") {
-      inflected = entry.k.toLowerCase() + "i";
+      // Must branch on noun class like every other case here does — class-2
+      // nouns store their citation form WITH the trailing -s ("arkes"), which
+      // has to be stripped before adding the genitive "-i" ("arkei"), not
+      // appended straight onto it ("arkesi"). This was the one case in this
+      // function that skipped the class check entirely.
+      if (cls === "1st") {
+        inflected = entry.k.toLowerCase() + "i";
+      } else {
+        let base = entry.k.toLowerCase().endsWith('s') ? entry.k.slice(0, -1).toLowerCase() : entry.k.toLowerCase();
+        inflected = base + "i";
+      }
       return inflected;
     }
     if (cls === "1st") {
@@ -1306,7 +1316,7 @@ function switchVariant(compIdx, variantIdx) {
 
 function renderEngKesGloss(outputComponents, words, terminalPunct) {
   if (!terminalPunct) terminalPunct = ".";
-  const box = document.getElementById('translate-result');
+  const box = window._tbox || document.getElementById('translate-result');
 
   // Rebuild finalOrder from updated components.
   // IMPORTANT: prepGroups must be built FIRST, since it's the pass that marks
@@ -1541,12 +1551,242 @@ function selectMeaning(tokenIdx, meaningIdx) {
   doTranslate();
 }
 
+// ── Compound-sentence (clause) splitting ─────────────────────────────────
+// The per-clause parser below has no concept of a clause boundary: given
+// "The king is tall and the son is short" it treated "and" as an NP
+// conjunction, pooled both subjects/predicates together and doubled the
+// verb. Rather than teach the core parser about multiple clauses, we split
+// the sentence at a coordinating conjunction ("and"/"or"/"but", or ";" / ",")
+// ONLY when both sides are independent clauses (each has its own verb with a
+// subject in front of it), translate each clause separately with the core,
+// and stitch the results together. "I help the son and the daughter" and
+// "the son and the king help me" are NOT split (one side has no verb).
+const CLAUSE_DETERMINERS = new Set(["the","a","an","my","your","his","her","its","our","their","this","that","these","those","some","any","every","each","all","no","two","three","four","five","six","seven","eight","nine","ten","of","to","in","on","at","by","for","with","from"]);
+const CLAUSE_AUX = new Set(["is","are","was","were","am","be","been","will","shall","do","does","did","has","have","had","can","could","would","should","must","may","might","isnt","arent","wasnt","werent","dont","doesnt","didnt","wont"]);
+const ENG_IRREGULAR_VERBFORMS = new Set(["spoke","ate","fell","went","ran","came","saw","said","gave","took","made","knew","got","thought","brought","fought","taught","sought","bought","caught","held","kept","wrote","drove","rose","chose","broke","froze","stole","drew","grew","showed","threw","wore","tore","flew","blew","hid","rode","beat","won","began","drank","swam","sang","rang","sank","spun","stung","left","lost","met","paid","sat","slept","stood","told","understood","found","felt","heard","led","sent","spent","built","lent","bent","meant","sold"]);
+function engWordIsVerbForm(w) {
+  if (!w) return false;
+  if (CLAUSE_AUX.has(w) || ENG_IRREGULAR_VERBFORMS.has(w)) return true;
+  let cands = [w];
+  if (w.endsWith("ies")) cands.push(w.slice(0, -3) + "y");
+  if (w.endsWith("es")) cands.push(w.slice(0, -2));
+  if (w.endsWith("s")) cands.push(w.slice(0, -1));
+  if (w.endsWith("ed")) cands.push(w.slice(0, -2), w.slice(0, -1));
+  if (w.endsWith("ing")) cands.push(w.slice(0, -3), w.slice(0, -3) + "e");
+  return cands.some(c => c && findWordByEnglishPhrase(c, "VERB"));
+}
+const ENG_MODALS = new Set(["will","shall","can","could","would","should","must","may","might"]);
+const ENG_BE = new Set(["is","are","was","were","am"]);
+const engWords = (t) => t.toLowerCase().replace(/[,!?\.;:'"]/g, '').split(/\s+/).filter(Boolean);
+// Index of the first verb/aux in a clause (a verb needs a subject before it,
+// so index 0 never counts, and a word right after a determiner is a noun).
+function engFirstVerbIdx(ws) {
+  for (let p = 1; p < ws.length; p++) {
+    if (CLAUSE_DETERMINERS.has(ws[p - 1]) && !CLAUSE_AUX.has(ws[p])) continue;
+    if (engWordIsVerbForm(ws[p])) return p;
+  }
+  return -1;
+}
+function engClauseHasVerb(text) { return engFirstVerbIdx(engWords(text)) >= 0; }
+// A subject-less continuation ("...and see the son"): starts with a verb form.
+function engStartsWithVerb(text) {
+  let ws = engWords(text);
+  return ws.length > 0 && !CLAUSE_DETERMINERS.has(ws[0]) && engWordIsVerbForm(ws[0]);
+}
+// Subject (and any modal/progressive auxiliary worth inheriting) of a finished clause.
+function engSubjectInfo(text) {
+  let raw = text.replace(/[,!?\.;:]/g, '').split(/\s+/).filter(Boolean);
+  let ws = raw.map(w => w.toLowerCase().replace(/['"]/g, ''));
+  let vi = engFirstVerbIdx(ws);
+  if (vi < 1) return null;
+  let subj = raw.slice(0, vi).join(" ");
+  let aux = ws[vi];
+  return { subj, aux: (ENG_MODALS.has(aux) || ENG_BE.has(aux)) ? raw[vi] : null, isModal: ENG_MODALS.has(aux), isBe: ENG_BE.has(aux) };
+}
+function kesAnalyzeAll(toks) { return toks.map((t, i) => analyzeWordMorphology(t.replace(/[,;]$/, ""), toks, i)); }
+function kesFirstVerbIdx(an, minIdx) {
+  for (let p = minIdx; p < an.length; p++) if (an[p] && an[p].type === "verb") return p;
+  return -1;
+}
+function kesClauseHasVerb(tokens) { return kesFirstVerbIdx(kesAnalyzeAll(tokens), 1) >= 0; }
+const kesIsNomHead = (r) => r && (r.type === "noun" || r.type === "name" || r.type === "pronoun") && r.case === "nominative";
+// Does the token run contain its own subject (a nominative head before the verb)?
+function kesOwnSubject(toks) {
+  let an = kesAnalyzeAll(toks), vi = kesFirstVerbIdx(an, 0);
+  if (vi < 0) return false;
+  return an.slice(0, vi).some(kesIsNomHead);
+}
+// Tokens making up the subject of a Kes clause: everything up to and including
+// the first nominative head (so preceding genitive possessors come along), plus
+// any coordinated nominative heads ("silas ob arkes"). Returns null if none.
+function kesSubjectTokens(toks) {
+  let an = kesAnalyzeAll(toks), vi = kesFirstVerbIdx(an, 0);
+  let end = -1;
+  for (let p = 0; p < (vi < 0 ? an.length : vi); p++) if (kesIsNomHead(an[p])) { end = p; break; }
+  if (end < 0) return null;
+  while (an[end + 1] && an[end + 1].type === "conjunction" && kesIsNomHead(an[end + 2])) end += 2;
+  return toks.slice(0, end + 1).map(t => t.replace(/[,;]$/, "")).filter((t, p) => {
+    let r = an[p]; return r && (r.type === "noun" || r.type === "name" || r.type === "pronoun" || r.type === "conjunction" || r.type === "number" || r.type === "adjective");
+  });
+}
+// Returns { clauses: [text...], conns: [...], shared: [subjectCopy|null ...] }.
+// `shared[i]` is non-null when clause i was a subject-less continuation whose
+// subject was copied in from an earlier clause (so the caller can strip it
+// back out of the output where the target language allows dropping it).
+function splitClauses(dir, input) {
+  let clauses = [], conns = [], shared = [null];
+  if (dir === "eng-kes") {
+    let parts = input.split(/(\s*;\s*|\s*,\s*(?:and|or|but)\s+|\s+(?:and|or|but)\s+|\s*,\s+)/i);
+    let cur = parts[0], lastSubj = null;
+    for (let k = 1; k < parts.length; k += 2) {
+      let sep = parts[k], next = parts[k + 1] || "";
+      let curHasVerb = engClauseHasVerb(cur);
+      let full = curHasVerb && engClauseHasVerb(next);
+      let vp = !full && curHasVerb && engStartsWithVerb(next) && !/^\s*;/.test(sep);
+      if (full || vp) {
+        clauses.push(cur.trim());
+        let m = sep.match(/(and|or|but)/i);
+        conns.push(m ? m[1].toLowerCase() : "and");
+        if (full) { cur = next; shared.push(null); }
+        else {
+          let info = engSubjectInfo(cur.replace(/[?!.]\s*$/, ""));
+          let nextWs = engWords(next), fw = nextWs[0];
+          let prefix = info ? info.subj : "";
+          // inherit a modal ("will help X and see Y") or progressive be ("is helping ... and seeing ...")
+          if (info && info.aux && !CLAUSE_AUX.has(fw) &&
+              ((info.isModal && !/(s|ed|ing)$/.test(fw)) || (info.isBe && /ing$/.test(fw)))) prefix += " " + info.aux;
+          cur = prefix ? prefix + " " + next : next;
+          shared.push(prefix || null);
+        }
+      } else cur += sep + next;
+    }
+    clauses.push(cur.trim());
+  } else {
+    let toks = input.split(/\s+/).filter(Boolean);
+    let cur = [];
+    const flush = (rest, conn, hadBareComma) => {
+      let restOwn = kesOwnSubject(rest);
+      let copy = null;
+      if (!restOwn) {
+        copy = kesSubjectTokens(cur.filter((t, p) => true));
+        if (!copy || !copy.length) return false;
+      }
+      clauses.push(cur.join(" ").replace(/[,;]$/, ""));
+      conns.push(conn);
+      shared.push(copy ? copy.join(" ") : null);
+      cur = copy ? copy.slice() : [];
+      return true;
+    };
+    for (let k = 0; k < toks.length; k++) {
+      let bare = toks[k].replace(/[,;]$/, "");
+      let r = analyzeWordMorphology(bare, toks, k);
+      let rest = toks.slice(k + 1);
+      let isConj = r && r.type === "conjunction" && cur.length >= 2;
+      let isComma = !isConj && /[,;]$/.test(toks[k]) && cur.length >= 1;
+      if (isConj && kesClauseHasVerb(cur) && kesFirstVerbIdx(kesAnalyzeAll(rest), 0) >= 0 &&
+          flush(rest, r.selectedMeaning || (r.gloss || "and").split(/,\s*/)[0])) continue;
+      if (isComma && kesClauseHasVerb(cur.concat(bare)) && kesFirstVerbIdx(kesAnalyzeAll(rest), 0) >= 0) {
+        let saved = cur;
+        cur = cur.concat(bare);           // comma stripped for analysis/output
+        if (flush(rest, "and")) continue;
+        cur = saved;                       // flush declined: keep the token as-is below
+      }
+      cur.push(toks[k]);
+    }
+    if (cur.length) clauses.push(cur.join(" ").replace(/[,;]$/, ""));
+  }
+  return { clauses, conns, shared };
+}
+
 function doTranslate() {
   const dir = document.querySelector('input[name=direction]:checked').value;
   const input = document.getElementById('translate-input').value.trim();
   const box = document.getElementById('translate-result');
   if (!input) { box.style.display = "none"; box.innerHTML = ""; return; }
   box.style.display = "block";
+
+  const { clauses, conns, shared } = splitClauses(dir, input);
+  if (clauses.length <= 1) {
+    window._tbox = null;
+    doTranslateCore(dir, input, box);
+    return;
+  }
+
+  // Compound sentence: run the core once per clause into a detached box,
+  // then merge. Only the final clause's state is kept for the variant
+  // switcher, so per-word dropdowns are removed from the merged view.
+  const termMatch = input.match(/([?!.])\s*$/);
+  const finalPunct = termMatch ? termMatch[1] : ".";
+  const eng2kes = dir === "eng-kes";
+  let sections = [], translations = [], droppedFlags = [];
+  const tmp = document.createElement('div');
+  clauses.forEach((cl, ci) => {
+    let isLast = ci === clauses.length - 1;
+    let clauseText = cl.replace(/[?!.]\s*$/, "") + (isLast ? finalPunct : ".");
+    tmp.innerHTML = "";
+    window._tbox = tmp;
+    doTranslateCore(dir, clauseText, tmp);
+    window._tbox = null;
+    tmp.querySelectorAll('select').forEach(sel => sel.remove());
+    let finalP = Array.from(tmp.querySelectorAll('p')).find(p => /Final Translation/.test(p.textContent));
+    let text = "";
+    if (finalP) {
+      let span = finalP.querySelector('span');
+      text = span ? span.textContent.trim() : "";
+      finalP.remove();
+    }
+    const clauseHtml = tmp.innerHTML;
+    text = text.replace(/[?!.]\s*$/, "");
+    // Kes→Eng shared subject: the subject was copied into this clause so it
+    // parses/agrees correctly; English drops it again ("I help X and help Y").
+    let dropped = false;
+    if (!eng2kes && ci > 0 && shared[ci]) {
+      tmp.innerHTML = "";
+      window._tbox = tmp;
+      doTranslateCore(dir, shared[ci] + ".", tmp);
+      window._tbox = null;
+      let sp = Array.from(tmp.querySelectorAll('p')).find(p => /Final Translation/.test(p.textContent));
+      let subjEng = sp && sp.querySelector('span') ? sp.querySelector('span').textContent.trim().replace(/[?!.]\s*$/, "") : "";
+      if (subjEng && text.toLowerCase().startsWith(subjEng.toLowerCase() + " ")) {
+        text = text.slice(subjEng.length).trim();
+        dropped = true;
+      }
+      // restore this clause's own gloss markup (tmp was reused above)
+      tmp.innerHTML = clauseHtml;
+    }
+    if (ci > 0 && text && !dropped && !/^I(\s|$|')/.test(text)) text = text.charAt(0).toLowerCase() + text.slice(1);
+    droppedFlags.push(dropped);
+    translations.push(text);
+    sections.push(`<div style="margin-bottom:0.75rem;padding-bottom:0.5rem;border-bottom:1px dashed var(--border);">
+      <div style="font-size:0.7rem;color:var(--gold);font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;margin-bottom:0.4rem;">CLAUSE ${ci + 1}</div>${tmp.innerHTML}</div>`);
+  });
+
+  // Connector between clauses: Kestelál word for and/or/but (Eng→Kes), or
+  // the English word the Kes conjunction glosses to (Kes→Eng).
+  let combined = translations[0];
+  for (let ci = 1; ci < translations.length; ci++) {
+    if (eng2kes) {
+      // "or, but" is one dictionary entry whose gloss the phrase matcher splits badly, so look up by gloss text
+      let cwWord = conns[ci - 1];
+      let cw = CORE_DICT.find(x => x.t === "CONJ" && x.e.toLowerCase().split(/[,;\/]\s*/).includes(cwWord));
+      combined += " " + (cw ? cw.k : cwWord) + " " + translations[ci];
+    } else {
+      let cn = String(conns[ci - 1] || "and").toLowerCase();
+      // shared-subject continuation ("I help X and help Y") takes no comma
+      // shared-subject chain: "I help X, watch Y and help Z" — bare commas until the last link
+      let chainMid = droppedFlags[ci] && droppedFlags[ci + 1] && cn === "and";
+      if (chainMid) combined += ", " + translations[ci];
+      else combined += (droppedFlags[ci] ? " " : ", ") + cn + " " + translations[ci];
+    }
+  }
+  combined = combined.charAt(0).toUpperCase() + combined.slice(1) + finalPunct;
+
+  box.innerHTML = sections.join("") + `
+    <p><strong>Final Translation:</strong> <span style="color:var(--green-light); font-weight:600;">${combined}</span>${eng2kes ? kesScript(combined) : ''}</p>
+    <p style="font-size:0.75rem;color:var(--text-dim);font-style:italic;">Compound sentence: translated as ${clauses.length} clauses joined by the conjunction.</p>`;
+}
+
+function doTranslateCore(dir, input, box) {
 
   // Detect the sentence's own terminal punctuation (?, !, or .) BEFORE any
   // downstream code strips punctuation out of the input for tokenization —
@@ -1805,6 +2045,25 @@ function doTranslate() {
         // Prepositive: "Ei silas" = my son
         mergedTokens2.push(Object.assign({}, next, {
           selectedMeaning: t.selectedMeaning + " " + next.selectedMeaning,
+          _hasPossessive: true
+        }));
+        consumed2[idx] = true; consumed2[idx + 1] = true;
+        continue;
+      }
+      // A genitive-case NOUN or NAME ("arkei" = king's, from "the king's X"
+      // or "X of the king") needs the identical treatment, one level up:
+      // without merging it here, it falls through to being classified as
+      // just another same-role noun sitting next to the one it actually
+      // possesses (see the predicate-noun merge pass and _isGenitiveModifier
+      // on the eng→kes side for the mirror-image problem) — e.g. "Arkei buka
+      // már" was coming out as "I the king watch the book" instead of "I see
+      // the king's book". Rendered as "the X's Y" (or "X's Y" for a name,
+      // which never takes "the").
+      if ((t.type === "noun" || t.type === "name") && t.case === "genitive" && isPossessibleHead(next) && !consumed2[idx + 1]) {
+        let possessorText = t.selectedMeaning;
+        if (t.type === "noun" && !possessorText.toLowerCase().startsWith("the ")) possessorText = "the " + possessorText;
+        mergedTokens2.push(Object.assign({}, next, {
+          selectedMeaning: possessorText + "'s " + next.selectedMeaning,
           _hasPossessive: true
         }));
         consumed2[idx] = true; consumed2[idx + 1] = true;
@@ -2219,15 +2478,24 @@ function doTranslate() {
       // Two bare accusative objects with nothing coordinating them ("Es buka
       // sila adár" — book, son, both plain accusative, no "ob"/"and" between
       // them) is Kestelál's way of marking a ditransitive verb's direct +
-      // indirect object ("I give the book [to] the son") — the case system
-      // doesn't distinguish which is which any further than word order, so
-      // without this the second object was just stranding next to the first
-      // with no connector at all ("I give the book the son"). This applies
-      // per CLUSTER, so a coordinated recipient ("the son and the daughter")
-      // still gets exactly one "to", not one per name, and a genuine 3-way
-      // list with only one cluster (no separate direct object at all) is
-      // left alone.
-      if (objClusters.length > 1) {
+      // indirect object. The case system doesn't distinguish which is which
+      // any further than word order, so this is a genuine guess either way —
+      // but the two possible guesses are not equally safe:
+      //  - If the FIRST object is a NOUN ("the book", "the son"), assume the
+      //    ENGLISH "V [theme] to [recipient]" reading and insert "to" before
+      //    the rest: "I give the book to the son." This can still guess the
+      //    wrong member of a noun/noun pair as the theme (there's no way to
+      //    tell "book" from "son" apart semantically here), but "to the
+      //    son"/"to the book" both at least parse as grammatical, if
+      //    sometimes back-to-front, English.
+      //  - If the FIRST object is a PRONOUN ("me", "him"...), a personal
+      //    pronoun in that slot is overwhelmingly the recipient of a
+      //    double-object construction ("gives ME the book"), which takes NO
+      //    preposition in English at all — inserting "to" here doesn't just
+      //    guess wrong, it produces something outright nonsensical ("gives
+      //    me TO the book"). So: no "to" in this case, leave the objects
+      //    bare in their original order.
+      if (objClusters.length > 1 && looseObjs[0] && looseObjs[0].type !== "pronoun") {
         objClusters = objClusters.map((cluster, ci) => ci === 0 ? cluster : cluster.map((t, ti) => ti === 0 ? "to " + t : t));
       }
       let objPhrases = objClusters.map(cluster => cluster.join(" "));
@@ -2279,7 +2547,9 @@ function doTranslate() {
       fluidTranslation = mergedTokens.map((t) => {
         let g = t.selectedMeaning;
         if (t.type === "unknown") return `[${g}]`;
-        if (t.type === "noun" && !t._hasPossessive && !g.toLowerCase().startsWith("the ")) return "the " + g;
+        if (t.type === "noun" && !t._hasPossessive && !g.toLowerCase().startsWith("the ")) g = "the " + g;
+        // a coordinated noun (merged by the conjunction pass) keeps its "and"/"or"/"but"
+        if (t._conjWord) g = t._conjWord + " " + g;
         return g;
       }).join(" ");
       fluidTranslation = fluidTranslation.charAt(0).toUpperCase() + fluidTranslation.slice(1) + terminalPunct;
@@ -2325,7 +2595,29 @@ function doTranslate() {
       <p><strong>Final Translation:</strong> <span style="color:var(--green-light); font-weight:600;">${fluidTranslation}</span></p>
     `;
   } else {
-    let words = input.toLowerCase().replace(/[,!?\.;:'"]/g, '').split(/\s+/);
+    // "'s" possessive ("the king's son") needs to be recognized BEFORE the
+    // apostrophe-stripping tokenization below destroys it — afterward
+    // "king's" is indistinguishable from "kings", and was silently being
+    // parsed as an ordinary English plural ("the kings"), losing the
+    // possessive relationship entirely (case, number, AND meaning all wrong:
+    // "The king's son helps me" was coming out as roughly "The kings helps
+    // me", not "the son of the king"). Rewrite "X's" to a dedicated marker
+    // token read further down, right next to where it appeared — Kestelál's
+    // own possessive order is possessor-first anyway ("ei sila" = my son),
+    // matching where English already puts "X's" relative to what follows.
+    // Excluded: a closed set of pronouns/determiners where "'s" is a
+    // contraction of "is"/"has" in virtually all real usage, never a
+    // possessive ("he's", "it's", "that's"...) — including them would
+    // misfire on ordinary sentences far more often than it would correctly
+    // catch a genuine possessive.
+    const APOSTROPHE_S_CONTRACTION_WORDS = new Set([
+      "he", "she", "it", "that", "this", "what", "who", "there", "here",
+      "everyone", "someone", "everybody", "somebody", "how", "when", "where"
+    ]);
+    let preprocessedInput = input.replace(/(\w+)'s\b/gi, (match, word) =>
+      APOSTROPHE_S_CONTRACTION_WORDS.has(word.toLowerCase()) ? match : word + " possessivemarker"
+    );
+    let words = preprocessedInput.toLowerCase().replace(/[,!?\.;:'"]/g, '').split(/\s+/);
     // Contractions lose their apostrophe in the strip above ("isn't" → "isnt"),
     // so expand the common negative contractions back into two words here —
     // this lets the rest of the parser treat "isnt"/"dont"/etc. exactly like
@@ -2354,6 +2646,10 @@ function doTranslate() {
     let nextIsIndefinite = false;
     let nextIsDefinite = false;
     let nextIsGenitive = false;
+    // Set alongside nextIsGenitive when it comes from the English word "of"
+    // (see the "of" handling below) — the outputComponents index of the noun
+    // that the upcoming genitive possessor should be inserted in front of.
+    let genitiveHeadIdx = null;
     let nextIsInstrumental = false;
     // Set true immediately after a copula ("is"/"was"/"will be") is pushed, and
     // consumed by the very next noun/name/pronoun that follows (surviving through
@@ -2823,6 +3119,7 @@ function doTranslate() {
           if (precededByPrep) role = "object";
 
           // Genitive inflection
+          let wasGenitiveOf = nextIsGenitive && genitiveHeadIdx !== null;
           if (nextIsGenitive) {
             let cls2 = detectNounClass(matchedEntry.k);
             // Preserve capitalization for proper names (NAME entries) — common
@@ -2838,7 +3135,17 @@ function doTranslate() {
               let base2 = caseBase.toLowerCase().endsWith('s') ? caseBase.slice(0, -1) : caseBase;
               inflected = base2 + "i";
             }
-            role = "genitive";
+            // "the son OF the king" — this noun is the POSSESSOR of whatever
+            // came right before "of" (genitiveHeadIdx). Kestelál's possessive
+            // order is possessor-first, matching how "my son" → "ei sila"
+            // already works — so rather than bucketing this into its own
+            // separate "genitive" slot (which the final assembly emits AFTER
+            // every subject, disconnected from the noun it actually
+            // modifies), it inherits that head noun's role and gets spliced
+            // in right before it, at push time below.
+            role = (genitiveHeadIdx !== null && outputComponents[genitiveHeadIdx])
+              ? outputComponents[genitiveHeadIdx].role
+              : "genitive";
           }
 
           // Instrumental inflection
@@ -2891,7 +3198,15 @@ function doTranslate() {
               }
             }
           }
-          outputComponents.push({ type: matchedEntry.t.toLowerCase(), role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + (pendingNumWord ? pendingNumWord + " " : "") + inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k, case: targetCase, _entry: matchedEntry, _inflectParams: { type: "noun", targetCase, isPlural, cls }, _engSource: words.slice(i, i + matchLength).join(" ") });
+          {
+            let genComp = { type: matchedEntry.t.toLowerCase(), role: role, word: (pendingConjWord ? pendingConjWord + " " : "") + (pendingNumWord ? pendingNumWord + " " : "") + inflected, num: isPlural ? "plural" : "singular", _base: matchedEntry.k, case: targetCase, _entry: matchedEntry, _inflectParams: { type: "noun", targetCase, isPlural, cls }, _engSource: words.slice(i, i + matchLength).join(" "), _isGenitiveModifier: wasGenitiveOf };
+            if (wasGenitiveOf && genitiveHeadIdx !== null && outputComponents[genitiveHeadIdx]) {
+              outputComponents.splice(genitiveHeadIdx, 0, genComp);
+            } else {
+              outputComponents.push(genComp);
+            }
+          }
+          genitiveHeadIdx = null;
           pendingConjWord = null;
           pendingNumWord = null;
         } else if (matchedEntry.t === "VERB") {
@@ -2987,8 +3302,48 @@ function doTranslate() {
         continue;
       }
 
+      // "possessivemarker" stands in for "'s" (see the preprocessing step at
+      // the top of this branch) — it doesn't correspond to an English word of
+      // its own, so there's nothing to match against the dictionary. Instead,
+      // retroactively convert whatever noun/name was JUST pushed (the
+      // possessor — "king" in "the king's son") into genitive case. Unlike
+      // "of" (below), no reordering is needed: "X's" already sits before the
+      // noun it possesses in English, exactly where Kestelál wants a
+      // possessor to be ("ei sila" = my son), so the noun stays right where
+      // it was pushed.
+      if (token === "possessivemarker") {
+        let last = outputComponents[outputComponents.length - 1];
+        if (last && (last.type === "noun" || last.type === "name") && last._entry) {
+          let cls = last._entry.cls || detectNounClass(last._entry.k);
+          let genParams = { type: "noun", targetCase: "genitive", isPlural: last.num === "plural", cls };
+          last.word = reInflectEntry(last._entry, genParams);
+          last.case = "genitive";
+          last._inflectParams = genParams;
+          last._isGenitiveModifier = true;
+          // "The king's BOOK" is just as definite as "THE book" — without
+          // this, the noun that follows falls through to being treated as
+          // an INDEFINITE object (nothing else here ever sets
+          // nextIsDefinite for a possessed noun), which under Kestelál's
+          // differential object marking left it in its bare/nominative
+          // citation form instead of properly case-marked — e.g. "the
+          // king's book" as an object was coming out as "arkei bukas"
+          // (nominative "bukas") instead of "arkei buka" (accusative).
+          nextIsDefinite = true;
+        }
+        i++; continue;
+      }
+
       if (token === "of") {
         nextIsGenitive = true;
+        // Track which component this genitive possessor will belong next to:
+        // "the son OF the king" names the POSSESSED noun (son) first in
+        // English, but Kestelál's own possessive order is possessor-first
+        // (matches how "my son" → "ei sila" already works, pronoun before
+        // noun) — so the noun that follows "of" needs to be INSERTED before
+        // this head noun rather than appended after the whole clause, and
+        // needs to share its role (subject/object/etc), not sit in a
+        // separate late "genitive" slot disconnected from what it modifies.
+        genitiveHeadIdx = outputComponents.length > 0 ? outputComponents.length - 1 : null;
         i++; continue;
       }
 
@@ -3137,6 +3492,12 @@ function doTranslate() {
       // Find the immediately following noun/name/pronoun
       let nextNoun = null;
       for (let j = idx + 1; j < outputComponents.length; j++) {
+        // Skip a genitive possessor noun ("of the king") — it's a modifier
+        // of some OTHER noun, not a valid target in its own right, and
+        // splicing it in earlier (see the genitive-reorder fix above) can
+        // put it directly between a quantifier/adjective and the noun it's
+        // actually meant to describe.
+        if (outputComponents[j]._isGenitiveModifier) continue;
         if (outputComponents[j].type === "noun" || outputComponents[j].type === "name" || outputComponents[j].type === "pronoun") {
           nextNoun = outputComponents[j];
           break;
@@ -3205,12 +3566,25 @@ function doTranslate() {
       for (let j = idx + 1; j < outputComponents.length; j++) {
         let c = outputComponents[j];
         if (c.type === "verb") break; // a verb boundary means no noun ahead in this clause
+        if (c._isGenitiveModifier) continue; // see the quantifier search above — same reason
         if (c.type === "noun" || c.type === "name" || c.type === "pronoun") { targetNoun = c; break; }
       }
       if (!targetNoun) {
+        // Backward fallback is specifically for a true predicate-adjective
+        // ("the son of the king IS tall" — nothing follows "tall" in the
+        // clause, so it must be describing the SUBJECT via the copula).
+        // Skip any noun that isn't actually the subject — a genitive
+        // modifier sitting between the subject and the verb ("the king" in
+        // "the son of the king") is a noun too, and being the NEAREST one
+        // backward from the adjective, an unconditional "nearest preceding
+        // noun" search would grab it instead: "tall" would end up agreeing
+        // with (and displaying attached to) "the king" rather than "the
+        // son" — e.g. producing genitive-inflected "atáli" out of "atál"
+        // and stranding it away from the real subject entirely.
         for (let j = idx - 1; j >= 0; j--) {
           let c = outputComponents[j];
-          if (c.type === "noun" || c.type === "name" || c.type === "pronoun") { targetNoun = c; break; }
+          if (c._isGenitiveModifier) continue; // a possessor noun, not a valid predicate-adjective target
+          if ((c.type === "noun" || c.type === "name" || c.type === "pronoun") && c.role === "subject") { targetNoun = c; break; }
         }
       }
       if (!targetNoun) { comp._adjPending = false; continue; }
