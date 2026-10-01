@@ -4286,15 +4286,21 @@ function forgeStem(x) {
   let syl = (forgeStrip(k).match(/[aeiou]+/g) || []).length;
   return (x.t === "NOUN" && syl >= 2 && /s$/.test(k)) ? k.slice(0, -1) : k;
 }
+// Kestelál has no "ss" before a consonant (in the lexicon "ss" only ever ends a word), so a join such as
+// vess + kas = vesskas is reduced to veskas.
+const forgeHasSsC = w => /s{2,}(?=[^aeiouáéíóú\s])/i.test(w);
+const forgeFixClusters = w => w.replace(/s{2,}(?=[^aeiouáéíóú\s])/gi, "s");
 function forgeCompound(mod, head, gloss) {
-  let raw = forgeAccent(forgeStem(mod), "none") + forgeAccent(forgeStem(head), "none");
+  const raw0 = forgeAccent(forgeStem(mod), "none") + forgeAccent(forgeStem(head), "none");
+  let raw = forgeFixClusters(raw0);
   let ends = !/[aeiou]$/.test(raw) ? "" : "s";
   let w = raw + ends;
   let word = forgeAccent(w, /s$/.test(w) ? "penult" : "final");
-  return { k: word, t: "NOUN", e: gloss, how: "compound",
+  return { k: word, t: "NOUN", e: gloss, how: "compound", auto: word,
     parts: [
       { form: forgeStem(mod), label: "modifier", note: `${mod.k} “${forgeGloss1(mod.e)}”${mod.t === "VERB" ? " (verb stem)" : ""}` },
       { form: forgeStem(head), label: "head", note: `${head.k} “${forgeGloss1(head.e)}” — the last element names what kind of thing it is` },
+      ...(raw !== raw0 ? [{ form: raw0 + " → " + raw, label: "sound rule", note: "“ss” before a consonant is impossible in Kestelál, so ssC becomes sC at the join" }] : []),
       ...(ends ? [{ form: "-s", label: "noun ending", note: "attested compounds (kaskádes, kilákos, nelótres) close a vowel-final stem with -s" }] : []) ],
     explain: `Modifier + head, written together (as in kas + kade → kaskádes “gatehouse”). Stress: ${/s$/.test(w) ? "penultimate syllable" : "final syllable"}, matching the attested compounds.` };
 }
@@ -4395,6 +4401,7 @@ function forgeRootChecks(c, pos, M) {
     : `Ends in “${forgeStrip(c.word).match(/[aeiou]+[^aeiou]*$/)[0]}”, a real ${pos === "NOUN" ? "noun" : "adjective"} ending (${M.rime[pos][r.v[n - 1] + "|" + r.c[n - 1]] || 0} words)`);
   add(n >= 1 && n <= 4 && M.nsyl[n] > 0, `${n} syllable${n > 1 ? "s" : ""} — within the attested 1–4`);
   add(!/(.)\1\1/.test(plain) && !/[aeiou]{3}/.test(plain), "No tripled letters or vowel strings");
+  add(!forgeHasSsC(plain), "No “ss” before a consonant (ssC is impossible in Kestelál)");
   add(c.off === "none" || (M.stress[`${pos}`] && true), c.off === "none" ? "Unmarked stress, as for many words of this shape" : `Stress marked on syllable ${Math.abs(parseInt(c.off, 10))} from the end, a pattern this ending takes`);
   const clash = forgeExists(c.word);
   const an = clash ? null : analyzeWordMorphology(c.word);
@@ -4803,6 +4810,12 @@ function forgeShow(entry, err) {
   const w = window._forgeWant = document.getElementById("forge-want").value;
   box.innerHTML = `
     <div style="text-align:center;margin-bottom:0.8rem;"><div style="font-family:'Cinzel',serif;font-size:1.7rem;color:var(--green-light);">${forgeEsc(entry.k)}</div>${kesScript(entry.k)}</div>
+    ${entry.how === "compound" ? `<div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.7rem;">
+      <label style="color:var(--gold);font-size:0.78rem;font-family:'JetBrains Mono',monospace;">COMPOUND · EDITABLE</label>
+      <input type="text" id="forge-word-edit" value="${forgeEsc(entry.k)}" onchange="forgeEditWord(this.value)" onkeydown="if(event.key==='Enter')forgeEditWord(this.value)" style="flex:1;min-width:10rem;" spellcheck="false">
+      ${entry.auto && entry.auto !== entry.k ? `<button class="btn" style="padding:0.25rem 0.7rem;font-size:0.75rem;" onclick="forgeEditWord(window._forgeCur.auto)">↺ Automatic: ${forgeEsc(entry.auto)}</button>` : ""}</div>
+      ${forgeHasSsC(entry.k) ? `<p style="color:#e08080;font-size:0.85rem;margin-bottom:0.6rem;">⚠ “ss” before a consonant is impossible in Kestelál. <button class="btn" style="padding:0.2rem 0.6rem;font-size:0.75rem;" onclick="forgeEditWord(forgeFixClusters(window._forgeCur.k))">Fix to ${forgeEsc(forgeFixClusters(entry.k))}</button></p>` : ""}
+      ${entry.auto && entry.auto !== entry.k ? `<p style="color:var(--text-dim);font-size:0.8rem;margin-bottom:0.6rem;">You changed the spelling; the breakdown below describes the automatic form.</p>` : ""}` : ""}
     ${clash ? `<p style="color:#e08080;">⚠ “${forgeEsc(clash.k)}” already exists (${clash.t}: ${forgeEsc(clash.e)}). It can't be kept as-is — pick another ending or verb${document.getElementById("forge-options").innerHTML.includes("Suggested new words") ? " (see “Suggested new words”)" : ""}.</p>` : ""}
     <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.7rem;">
       <span style="color:var(--amber);font-family:'JetBrains Mono',monospace;font-size:0.78rem;">${entry.t}${cls ? " · class " + cls : ""} · ${entry.how}</span>
@@ -4822,6 +4835,11 @@ function forgeShow(entry, err) {
     </div>
     ${entry.how === "root" ? '<div id="forge-family"></div>' : ""}`;
   if (entry.how === "root") forgeRenderFamily(entry, true);
+}
+function forgeEditWord(v) {
+  const e = window._forgeCur; v = (v || "").replace(/\s+/g, ""); if (!e || e.how !== "compound" || !v) return;
+  e.k = v; forgeShow(e);
+  const inp = document.getElementById("forge-word-edit"); if (inp && document.activeElement !== inp) { /* keep focus out of the way on re-render */ }
 }
 function forgeLoad() { try { return JSON.parse(kvGet(FORGE_KEY, "[]")); } catch { return []; } }
 function forgeSave(l) { kvSet(FORGE_KEY, JSON.stringify(l)); }
