@@ -213,6 +213,8 @@ nav {
   scrollbar-width: none;
 }
 nav::-webkit-scrollbar { display: none; }
+nav { scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+.tab-btn { scroll-snap-align: center; }
 
 /* Tab buttons with script hover animation */
 .tab-btn {
@@ -228,6 +230,7 @@ nav::-webkit-scrollbar { display: none; }
   white-space: nowrap;
   position: relative;
   overflow: hidden;
+  flex: 0 0 auto;              /* never squeeze a tab: the nav scrolls instead of clipping labels */
   transition: color 0.3s, border-color 0.3s;
 }
 
@@ -470,6 +473,9 @@ td {
    before things get properly cramped, without changing the layout. */
 @media (max-width: 900px) {
   .dict-entry { grid-template-columns: 150px 64px 1fr; }
+  /* the ambient corner glyphs run into the centred title below ~900px */
+  .header-deco { display: none; }
+  h1 { max-width: 100%; }
 }
 
 /* Phone: header/nav chrome, card padding, and anything laid out with
@@ -529,6 +535,7 @@ td {
   <button class="tab-btn" data-tab="gloss"><span class="tab-latin">Glossing & Analysis</span><span class="tab-script">Glossing & Analysis</span></button>
   <button class="tab-btn" data-tab="grammar"><span class="tab-latin">Grammar & Conjugation</span><span class="tab-script">Grammar & Conjugation</span></button>
   <button class="tab-btn" data-tab="dictionary"><span class="tab-latin">Dictionary</span><span class="tab-script">Dictionary</span></button>
+  <button class="tab-btn" data-tab="forge"><span class="tab-latin">Word Forge</span><span class="tab-script">Word Forge</span></button>
   <button class="tab-btn" data-tab="wants"><span class="tab-latin">Wants List</span><span class="tab-script">Wants List</span></button>
 </nav>
 
@@ -590,6 +597,39 @@ td {
   </div>
 </div>
 
+<div id="tab-forge" class="panel">
+  <div class="card">
+    <div class="card-title">Word Forge</div>
+    <p style="color:var(--text-dim);font-style:italic;font-size:0.9rem;margin-bottom:1rem;">
+      Coin a Kestelál word for a meaning. The Forge tries, easiest first: a word that already exists, a derivation from a verb
+      using endings attested in the lexicon, or a compound of two known roots. Everything is read live from the loaded dictionary.
+    </p>
+    <div class="grid-2">
+      <input type="text" id="forge-concept" placeholder="Concept in English (e.g. teacher, gatehouse)" onkeydown="if(event.key==='Enter')forgeFind()">
+      <select id="forge-pos" onchange="forgeFind()" style="width:100%">
+        <option value="NOUN">Noun</option><option value="ADJ">Adjective</option><option value="VERB">Verb (look up only)</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-top:0.7rem;">
+      <select id="forge-want" onchange="forgeWantChanged()" style="flex:1;min-width:14rem;"><option value="">— take a concept from Wants —</option></select>
+      <button class="btn" onclick="forgeFind()">Find options</button>
+    </div>
+    <div id="forge-options"></div>
+  </div>
+  <div class="card" id="forge-result-card" style="display:none">
+    <div class="card-title">Forged Result</div>
+    <div id="forge-result"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Forged Words <span id="forge-count" style="color:var(--text-muted);font-size:0.75rem;"></span></div>
+    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+      <button class="btn" onclick="forgeExport()" style="background:var(--green-deep);border-color:var(--green-mid);">⬇ Export forged as JSON</button>
+      <button class="btn" onclick="forgeClear(this)" style="background:rgba(180,40,40,0.15);border-color:rgba(180,40,40,0.35);color:#e08080;">✕ Clear</button>
+    </div>
+    <div id="forge-list"></div>
+  </div>
+</div>
+
 <div id="tab-wants" class="panel">
   <div class="card">
     <div class="card-title">Unknown Words — Wants List</div>
@@ -601,7 +641,7 @@ td {
       <button class="btn" onclick="wantsSelectAll()">Select All</button>
       <button class="btn" onclick="wantsSelectNone()">Deselect All</button>
       <button class="btn" onclick="wantsExport()" id="wants-export-btn" style="background:var(--green-deep);border-color:var(--green-mid);">⬇ Export Selected as JSON</button>
-      <button class="btn" onclick="wantsClearAll()" style="background:rgba(180,40,40,0.15);border-color:rgba(180,40,40,0.35);color:#e08080;">✕ Clear All</button>
+      <button class="btn" onclick="wantsClearAll(this)" style="background:rgba(180,40,40,0.15);border-color:rgba(180,40,40,0.35);color:#e08080;">✕ Clear All</button>
       <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--amber);">
         <span id="wants-count">0</span> words &nbsp;·&nbsp; <span id="wants-selected-count">0</span> selected
       </span>
@@ -680,6 +720,7 @@ async function initializeDataLayer() {
     CORE_DICT = EMERGENCY_FALLBACK_DICT;
     showDictLoadPrompt();
   }
+  forgeRestore();
   renderDict();
 }
 
@@ -709,6 +750,7 @@ function loadDictFile(input) {
     try {
       CORE_DICT = JSON.parse(e.target.result.trim());
       console.log(`Dictionary loaded from file: ${CORE_DICT.length} entries.`);
+      forgeRestore();
       renderDict();
       const banner = document.getElementById('dict-load-banner');
       if (banner) banner.remove();
@@ -3751,11 +3793,8 @@ function doGloss() {
   box.innerHTML = html;
 }
 
-function doDeclension() {
-  const w = document.getElementById('decl-word').value.trim();
-  const box = document.getElementById('decl-result');
-  if (!w) return;
-
+// Noun paradigm generator — shared by the Grammar tab (doDeclension) and the Word Forge.
+function declineNounForms(stem) {
   const ACCENT_MAP = { á:'a', é:'e', í:'i', ó:'o', ú:'u' };
   function stripStemAccent(stem) {
     return stem.split('').reverse().join('').replace(/[áéíóú]/, c => ACCENT_MAP[c]).split('').reverse().join('');
@@ -3763,22 +3802,6 @@ function doDeclension() {
   const VOWELS = "aeiouáéíóú";
   function endsInConsonant(s) { return s.length > 0 && !VOWELS.includes(s[s.length - 1]); }
 
-  // Find dictionary synonyms (same type, overlapping definitions)
-  function getSynonymStems(baseWord) {
-    let entry = CORE_DICT.find(x => x.k.toLowerCase() === baseWord.toLowerCase());
-    if (!entry) return [baseWord];
-    let defTokens = new Set(entry.e.toLowerCase().split(/[,;\/]+/).map(s => s.trim()).filter(Boolean));
-    let synonyms = CORE_DICT.filter(x => {
-      if (x.t !== entry.t) return false;
-      let xTokens = x.e.toLowerCase().split(/[,;\/]+/).map(s => s.trim());
-      return xTokens.some(t => defTokens.has(t));
-    }).map(x => x.k);
-    // Primary entry first
-    return [entry.k, ...synonyms.filter(k => k !== entry.k)];
-  }
-
-  // Compute all forms for a given stem
-  function computeForms(stem) {
     let cls = detectNounClass(stem);
     let r = stem.toLowerCase();
     let endsInS = r.endsWith('s');
@@ -3837,7 +3860,28 @@ function doDeclension() {
         insPlur: [base + "wa"],
       };
     }
+}
+
+function doDeclension() {
+  const w = document.getElementById('decl-word').value.trim();
+  const box = document.getElementById('decl-result');
+  if (!w) return;
+
+  // Find dictionary synonyms (same type, overlapping definitions)
+  function getSynonymStems(baseWord) {
+    let entry = CORE_DICT.find(x => x.k.toLowerCase() === baseWord.toLowerCase());
+    if (!entry) return [baseWord];
+    let defTokens = new Set(entry.e.toLowerCase().split(/[,;\/]+/).map(s => s.trim()).filter(Boolean));
+    let synonyms = CORE_DICT.filter(x => {
+      if (x.t !== entry.t) return false;
+      let xTokens = x.e.toLowerCase().split(/[,;\/]+/).map(s => s.trim());
+      return xTokens.some(t => defTokens.has(t));
+    }).map(x => x.k);
+    // Primary entry first
+    return [entry.k, ...synonyms.filter(k => k !== entry.k)];
   }
+
+  const computeForms = declineNounForms;
 
   // Gather all stems (primary + synonyms) and merge their options per cell
   let stems = getSynonymStems(w);
@@ -4051,8 +4095,24 @@ function kesToggleIns(el) {
 
 // ── Wants Tracker ──────────────────────────────────────────────────────────────
 const WANTS_KEY = "kestelalWants";
-function wantsLoad() { try { return JSON.parse(localStorage.getItem(WANTS_KEY)||"{}"); } catch { return {}; } }
-function wantsSave(d) { try { localStorage.setItem(WANTS_KEY,JSON.stringify(d)); } catch {} }
+// Storage with an in-memory fallback: localStorage throws in sandboxed/embedded contexts, and a
+// silent failure there meant Wants and forged words never appeared in any list.
+var _kvMem = {};
+function kvGet(key, def) { try { const v = localStorage.getItem(key); if (v !== null) return v; } catch {} return key in _kvMem ? _kvMem[key] : def; }
+function kvSet(key, val) { _kvMem[key] = val; try { localStorage.setItem(key, val); } catch {} }
+// In-page replacements for alert()/confirm(), which sandboxed frames block (Clear buttons did nothing).
+function toast(msg) {
+  const n = document.getElementById('notif'); if (!n) return;
+  n.textContent = msg; n.classList.add('show');
+  clearTimeout(window._toastT); window._toastT = setTimeout(() => n.classList.remove('show'), 3200);
+}
+function confirmTwice(btn, label, fn) {
+  if (btn.dataset.armed) { clearTimeout(btn._t); btn.textContent = btn.dataset.orig; delete btn.dataset.armed; fn(); return; }
+  btn.dataset.orig = btn.textContent; btn.dataset.armed = "1"; btn.textContent = label;
+  btn._t = setTimeout(() => { btn.textContent = btn.dataset.orig; delete btn.dataset.armed; }, 3500);
+}
+function wantsLoad() { try { return JSON.parse(kvGet(WANTS_KEY, "{}")); } catch { return {}; } }
+function wantsSave(d) { kvSet(WANTS_KEY, JSON.stringify(d)); }
 function wantsLog(rawWord, dir) {
   let word = rawWord.toLowerCase().replace(/^\[|\]$/g,"").replace(/[.,!?;:'"]/g,"").trim();
   if (!word || word.length < 2) return;
@@ -4076,6 +4136,7 @@ function renderWants() {
       <input type="checkbox" id="wants-cb-${idx}" data-word="${encodeURIComponent(item.word)}" style="width:1rem;height:1rem;accent-color:var(--green-bright);cursor:pointer;flex-shrink:0;" onchange="wantsUpdateSelectedCount()">
       <div style="flex:1;min-width:0;"><span class="de-word" style="font-size:1rem;">${item.word}</span></div>
       ${dir}
+      ${item.forged ? `<span title="Forged word attached to this Want" style="color:var(--green-light);font-size:0.78rem;">⚒ ${item.forged.k}</span>` : (item.dir!=="kes" ? `<button class="btn" style="padding:0.15rem 0.6rem;font-size:0.72rem;" onclick="forgeFromWant('${encodeURIComponent(item.word)}')">⚒ Forge</button>` : "")}
       <span style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--amber);background:rgba(200,146,42,0.1);padding:2px 7px;border-radius:3px;flex-shrink:0;">×${item.count}</span>
       <span style="font-size:0.72rem;color:var(--text-muted);flex-shrink:0;">${ago}</span>
       <button onclick="wantsDelete('${encodeURIComponent(item.word)}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.85rem;flex-shrink:0;padding:0 0.2rem;line-height:1;" title="Remove" onmouseover="this.style.color='#e08080'" onmouseout="this.style.color='var(--text-muted)'">✕</button>
@@ -4087,13 +4148,13 @@ function wantsUpdateSelectedCount(){ let n=document.querySelectorAll("#wants-lis
 function wantsSelectAll(){ document.querySelectorAll("#wants-list input[type=checkbox]").forEach(cb=>cb.checked=true); wantsUpdateSelectedCount(); }
 function wantsSelectNone(){ document.querySelectorAll("#wants-list input[type=checkbox]").forEach(cb=>cb.checked=false); wantsUpdateSelectedCount(); }
 function wantsDelete(enc){ let w=decodeURIComponent(enc); let d=wantsLoad(); delete d[w]; wantsSave(d); renderWants(); }
-function wantsClearAll(){ if(!confirm("Clear the entire Wants list?")) return; wantsSave({}); renderWants(); }
+function wantsClearAll(btn){ confirmTwice(btn,"Click again to clear all",()=>{ wantsSave({}); renderWants(); forgeRefreshWants(); toast("Wants list cleared."); }); }
 function wantsExport(){
   let cbs=document.querySelectorAll("#wants-list input[type=checkbox]:checked");
-  if(!cbs.length){ alert("Select at least one word to export."); return; }
+  if(!cbs.length){ toast("Tick at least one Want to export."); return; }
   let data=wantsLoad(), entries=[];
   cbs.forEach(cb=>{ let w=decodeURIComponent(cb.dataset.word); let item=data[w]; if(!item) return;
-    entries.push(item.dir==="kes" ? {k:w,t:"",e:"",cls:""} : {k:"",t:"",e:w,cls:""}); });
+    entries.push(item.forged ? {k:item.forged.k,t:item.forged.t,e:item.forged.e,cls:item.forged.cls||""} : item.dir==="kes" ? {k:w,t:"",e:"",cls:""} : {k:"",t:"",e:w,cls:""}); });
   let blob=new Blob([JSON.stringify(entries,null,2)],{type:"application/json"});
   let url=URL.createObjectURL(blob);
   let a=document.createElement("a"); a.href=url; a.download=`kestetal-wants-${new Date().toISOString().slice(0,10)}.json`; a.click();
@@ -4101,6 +4162,720 @@ function wantsExport(){
 }
 function wantsTimeAgo(ts){ let d=Date.now()-ts,m=Math.floor(d/60000); if(m<1) return"just now"; if(m<60) return m+"m ago"; let h=Math.floor(m/60); if(h<24) return h+"h ago"; return Math.floor(h/24)+"d ago"; }
 document.querySelectorAll('.tab-btn').forEach(btn=>{ if(btn.getAttribute('data-tab')==='wants') btn.addEventListener('click',renderWants); });
+
+// ── Word Forge ─────────────────────────────────────────────────────────────────
+// Another interface into the existing Kestelál system: it reads the LIVE lexicon
+// (CORE_DICT), reuses detectNounClass / declineNounForms (the noun-paradigm code
+// shared with the Grammar tab) / analyzeWordMorphology (round-trip check) /
+// findWordByEnglishPhrase, and stores its output in the existing Wants records.
+// Derivation patterns are not hard-coded: they are mined from verb→noun/adjective
+// families already present in the dictionary, so they grow with the lexicon.
+const FORGE_KEY = "kestelalForged";
+// Short readings of the most frequent attested suffixes (interpretation of the
+// lexicon examples shown beside each one; counts/examples are always live).
+const FORGE_ROLES = {
+  "NOUN:et":"doer / agent", "NOUN:at":"act, result or instrument", "NOUN:eras":"process or event",
+  "NOUN:as":"abstract result / idea", "NOUN:os":"thing / object", "NOUN:es":"quality, state or outcome",
+  "NOUN:us":"abstract concept", "NOUN:aret":"undergoer / recipient", "NOUN:ot":"concrete instance / cycle",
+  "ADJ:al":"having the quality of", "ADJ:il":"capable of / full of", "ADJ:at":"characterised by"
+};
+const forgeStrip = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const forgeEsc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const FORGE_ACC = { a:"á", e:"é", i:"í", o:"ó", u:"ú" };
+// Kestelál marks stress with an acute. Attested pattern: consonant-final derived
+// words (-ét, -át, -ál, -íl, -éras…) stress the suffix; -Vs compounds stress the
+// penultimate syllable.
+function forgeAccent(word, where) {
+  let w = word.normalize("NFC").replace(/[áéíóú]/g, c => "aeiou"["áéíóú".indexOf(c)]);
+  if (where === "none") return w;
+  let g = [...w.matchAll(/[aeiou]+/g)];
+  let t = where === "final" ? g[g.length - 1] : (g.length >= 3 ? g[g.length - 2] : null);
+  return t ? w.slice(0, t.index) + FORGE_ACC[w[t.index]] + w.slice(t.index + 1) : w;
+}
+function forgeSuffixIndex() {
+  if (window._forgeSI && window._forgeSI.n === CORE_DICT.length) return window._forgeSI.list;
+  const map = {};
+  const verbs = CORE_DICT.filter(x => x.t === "VERB" && /(ár|ar)$/.test(x.k) && !x._forged);
+  const targets = CORE_DICT.filter(x => (x.t === "NOUN" || x.t === "ADJ") && !x._forged);
+  verbs.forEach(v => {
+    const st = v.k.normalize("NFC").replace(/(ár|ar)$/, ""), sts = forgeStrip(st);
+    if (sts.length < 3) return;
+    targets.forEach(x => {
+      const k = x.k.normalize("NFC");
+      if (forgeStrip(k).startsWith(sts) && k.length > st.length) {
+        const tail = k.slice(st.length), key = x.t + ":" + forgeStrip(tail);
+        const r = map[key] || (map[key] = { pos: x.t, key, forms: {}, ex: [] });
+        r.forms[tail] = (r.forms[tail] || 0) + 1;
+        r.ex.push({ verb: v.k, word: x.k, gloss: x.e });
+      }
+    });
+  });
+  const list = Object.values(map).filter(r => r.ex.length >= 2).map(r => {
+    r.n = r.ex.length;
+    r.surface = Object.entries(r.forms).sort((a, b) => b[1] - a[1])[0][0];
+    r.role = FORGE_ROLES[r.key] || null;
+    return r;
+  }).sort((a, b) => b.n - a.n);
+  window._forgeSI = { n: CORE_DICT.length, list };
+  return list;
+}
+function forgeResolve(text, types) {
+  let t = (text || "").trim(); if (!t) return null;
+  let plain = forgeStrip(t);
+  let hit = CORE_DICT.find(x => types.includes(x.t) && forgeStrip(x.k) === plain);
+  if (hit) return hit;
+  // a bare root: noun without its class -s ("kade" → kades), verb without -ár ("sat")
+  hit = CORE_DICT.find(x => types.includes(x.t) && !x._forged && (
+    (x.t === "NOUN" && forgeStrip(x.k) === plain + "s") || (x.t === "VERB" && forgeStrip(x.k).replace(/ar$/, "") === plain)));
+  if (hit) return hit;
+  for (let ty of types) { let r = findWordByEnglishPhrase(t, ty); if (r) return r; }
+  return null;
+}
+const forgeGloss1 = e => e.split(/[,;\/]/)[0].replace(/^to\s+/i, "").trim();
+function forgeExists(word) { return CORE_DICT.find(x => forgeStrip(x.k) === forgeStrip(word)); }
+function forgeTokens(c) { return forgeStrip(c).split(/[^a-z]+/).filter(t => t.length > 2 && !["the","and","for","with","his","her"].includes(t)); }
+function forgeMatches(concept, pos) {
+  const toks = forgeTokens(concept), seen = new Set(), out = [];
+  const push = x => { let id = x.k + "|" + x.t; if (!seen.has(id)) { seen.add(id); out.push(x); } };
+  findAllWordsByEnglishPhrase(concept).forEach(push);
+  CORE_DICT.forEach(x => {
+    if (x._forged || !toks.length) return;
+    let opts = x.e.toLowerCase().split(/[,;\/]+/).map(o => o.trim().replace(/^to\s+/, ""));
+    if (toks.some(t => opts.some(o => o === t || o.split(/\s+/).includes(t)))) push(x);
+  });
+  return out.filter(x => !pos || x.t === pos).slice(0, 10);
+}
+
+function forgeTokStem(t) { return t.replace(/(ers?|ors?|ings?|ions?|ed|es|s)$/, ""); }
+function forgeVerbsFor(concept) {
+  const toks = forgeTokens(concept).map(forgeTokStem).filter(t => t.length >= 3);
+  return CORE_DICT.filter(v => v.t === "VERB" && /(ár|ar)$/.test(v.k) && !v._forged &&
+    toks.some(t => forgeStrip(v.e).split(/[^a-z]+/).map(forgeTokStem).some(g => g.length >= 3 && (g === t || (t.length >= 4 && (g.startsWith(t) || t.startsWith(g)))))));
+}
+// Candidates that are genuinely NEW: every attested ending applied to verbs related to the concept,
+// minus forms the dictionary already has.
+function forgeSuggest(concept, pos) {
+  const out = [], seen = new Set();
+  if (pos === "NOUN" || pos === "ADJ") {
+    const sufs = forgeSuffixIndex().filter(r => r.pos === pos).slice(0, 8);
+    forgeVerbsFor(concept).forEach(v => sufs.forEach(r => { const c = forgeDerive(v, r, concept); if (!forgeExists(c.k) && !seen.has(c.k)) { seen.add(c.k); out.push(c); } }));
+  }
+  if (pos === "NOUN") {
+    const ws = concept.trim().split(/\s+/);
+    if (ws.length === 2) {
+      const a = forgeResolve(ws[0], ["NOUN", "ADJ", "VERB"]), b = forgeResolve(ws[1], ["NOUN", "VERB"]);
+      if (a && b) { const c = forgeCompound(a, b, concept); if (!forgeExists(c.k) && !seen.has(c.k)) out.unshift(c); }
+    }
+  }
+  return out.slice(0, 12);
+}
+// ── construction ───────────────────────────────────────────────────────────────
+function forgeDerive(verb, rec, gloss) {
+  const st = forgeAccent(verb.k.replace(/(ár|ar)$/, ""), "none");
+  const word = st + rec.surface;
+  const ex = rec.ex.slice(0, 3).map(e => `${e.word} “${forgeGloss1(e.gloss)}”`).join(", ");
+  return { k: word, t: rec.pos, e: gloss, how: "derived",
+    parts: [
+      { form: st, label: "root", note: `${verb.k} “${forgeGloss1(verb.e)}” — infinitive -ár removed, stem accent dropped (stress moves to the suffix)` },
+      { form: rec.surface, label: "suffix", note: `${rec.role || "no reading assigned"} · attested ${rec.n}× in the lexicon (${ex})` } ],
+    explain: `Verb ${verb.k} supplies the root; the ${rec.pos === "NOUN" ? "noun" : "adjective"}-forming suffix -${rec.surface} is the most common written form of that ending among ${rec.n} verb-derived words already in the dictionary.` };
+}
+function forgeStem(x) {
+  let k = x.k.normalize("NFC");
+  if (x.t === "VERB") return k.replace(/(ár|ar)$/, "");
+  let syl = (forgeStrip(k).match(/[aeiou]+/g) || []).length;
+  return (x.t === "NOUN" && syl >= 2 && /s$/.test(k)) ? k.slice(0, -1) : k;
+}
+function forgeCompound(mod, head, gloss) {
+  let raw = forgeAccent(forgeStem(mod), "none") + forgeAccent(forgeStem(head), "none");
+  let ends = !/[aeiou]$/.test(raw) ? "" : "s";
+  let w = raw + ends;
+  let word = forgeAccent(w, /s$/.test(w) ? "penult" : "final");
+  return { k: word, t: "NOUN", e: gloss, how: "compound",
+    parts: [
+      { form: forgeStem(mod), label: "modifier", note: `${mod.k} “${forgeGloss1(mod.e)}”${mod.t === "VERB" ? " (verb stem)" : ""}` },
+      { form: forgeStem(head), label: "head", note: `${head.k} “${forgeGloss1(head.e)}” — the last element names what kind of thing it is` },
+      ...(ends ? [{ form: "-s", label: "noun ending", note: "attested compounds (kaskádes, kilákos, nelótres) close a vowel-final stem with -s" }] : []) ],
+    explain: `Modifier + head, written together (as in kas + kade → kaskádes “gatehouse”). Stress: ${/s$/.test(w) ? "penultimate syllable" : "final syllable"}, matching the attested compounds.` };
+}
+
+
+// ── Root generator ─────────────────────────────────────────────────────────────
+// Mints a brand-new root that *sounds like Kestelál*. The phonology is learned live from the
+// loaded dictionary (nothing hard-coded): which consonant runs may start a word, sit between
+// vowels or end a word; which vowel sequences occur; which endings each part of speech takes;
+// and where stress is marked. Every piece a candidate is built from is attested, then the whole
+// word must pass the grammar checks below before it is offered.
+const FORGE_V = new Set(["a", "e", "i", "o", "u"]);
+const forgePhon = w => forgeStrip(w).match(/th|[a-z]/g) || [];       // "th" is one phoneme
+function forgeRuns(w) {             // word → leading consonants, then [vowel run, consonant run] pairs
+  const ph = forgePhon(w), out = { lead: "", v: [], c: [] }; let i = 0;
+  while (i < ph.length && !FORGE_V.has(ph[i][0])) out.lead += ph[i++];
+  while (i < ph.length) {
+    let v = "", c = "";
+    while (i < ph.length && FORGE_V.has(ph[i])) v += ph[i++];
+    while (i < ph.length && !FORGE_V.has(ph[i][0])) c += ph[i++];
+    out.v.push(v); out.c.push(c);
+  }
+  return out;
+}
+const forgeInc = (o, k) => { o[k] = (o[k] || 0) + 1; };
+function forgeModel() {
+  if (window._forgeM && window._forgeM.n === CORE_DICT.length) return window._forgeM;
+  const M = { n: CORE_DICT.length, lead: {}, vrun: {}, med: {}, medAll: {}, fin: {}, rime: { NOUN: {}, VERB: {}, ADJ: {} }, stress: {}, nsyl: {}, words: [] };
+  CORE_DICT.forEach(x => {
+    if (x._forged || !["NOUN", "VERB", "ADJ"].includes(x.t)) return;
+    const k = x.k.normalize("NFC");
+    if (!/^[a-záéíóú]+$/i.test(k) || /[cx]/i.test(forgeStrip(k))) return;      // skip marginal/foreign letters
+    const r = forgeRuns(k), n = r.v.length; if (!n) return;
+    M.words.push(forgeStrip(k));
+    forgeInc(M.lead, r.lead); forgeInc(M.nsyl, n); forgeInc(M.fin, r.c[n - 1]);
+    r.v.forEach((v, i) => { forgeInc(M.vrun, v); if (i < n - 1) { const p = v.slice(-1); (M.med[p] = M.med[p] || {}); forgeInc(M.med[p], r.c[i]); forgeInc(M.medAll, r.c[i]); } });
+    forgeInc(M.rime[x.t], r.v[n - 1] + "|" + r.c[n - 1]);
+    const runs = [...k.toLowerCase().matchAll(/[aeiouáéíóú]+/g)];
+    const ai = runs.findIndex(m => /[áéíóú]/.test(m[0])), off = ai < 0 ? "none" : String(ai - runs.length);
+    const rk = r.v[n - 1] + r.c[n - 1];
+    [`${x.t}|${n}|${rk}`, `${x.t}|${n}`, `${x.t}`].forEach(key => { (M.stress[key] = M.stress[key] || {}); forgeInc(M.stress[key], off); });
+  });
+  // Keep only patterns that are genuinely part of the language: one-off clusters (e.g. "wlp", "sthr")
+  // come from single odd words, so groups need ≥2 occurrences and endings ≥3. Verb roots must take the
+  // regular -ár infinitive — the only verb shape the conjugation system and analyzer handle.
+  const prune = (o, min) => Object.keys(o).forEach(k => { if (o[k] < min) delete o[k]; });
+  prune(M.lead, 2); prune(M.vrun, 2); prune(M.medAll, 2); prune(M.fin, 2);
+  Object.values(M.med).forEach(d => Object.keys(d).forEach(k => { if (!M.medAll[k]) delete d[k]; }));
+  ["NOUN", "VERB", "ADJ"].forEach(p => prune(M.rime[p], 3));
+  Object.keys(M.rime.VERB).forEach(k => { if (k !== "a|r") delete M.rime.VERB[k]; });
+  window._forgeM = M; return M;
+}
+// Weighted pick; `boost(key)` multiplies weights (used for "sounds like").
+function forgePick(dist, boost) {
+  const ents = Object.entries(dist); if (!ents.length) return null;
+  const ws = ents.map(([k, c]) => (c + 0.3) * (boost ? boost(k) : 1)); let t = ws.reduce((a, b) => a + b, 0) * Math.random();
+  for (let i = 0; i < ents.length; i++) { t -= ws[i]; if (t <= 0) return ents[i][0]; }
+  return ents[ents.length - 1][0];
+}
+function forgeLev(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]); for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+function forgeBuildRoot(pos, n, M, seedRuns, fixedEnd) {
+  const boost = seedRuns ? (k => (seedRuns.has(k) ? 4 : 1)) : null;
+  const lead = forgePick(M.lead, boost);
+  const [rv, rc] = (fixedEnd || forgePick(M.rime[pos], k => (boost ? boost(k.split("|")[0]) : 1))).split("|");
+  const vs = [], cs = [];
+  for (let i = 0; i < n - 1; i++) {
+    const v = forgePick(M.vrun, boost); vs.push(v);
+    const md = M.med[v.slice(-1)];
+    cs.push(forgePick(md && Object.keys(md).length ? md : M.medAll, boost) || "t");
+  }
+  vs.push(rv); cs.push(rc);
+  // stress: learned per (POS, syllable count, ending), backing off to (POS, syllables) then POS
+  const enough = t => t && Object.values(t).reduce((a, b) => a + b, 0) >= 6;   // don't learn stress from 1–2 words
+  const tab = [M.stress[`${pos}|${n}|${rv}${rc}`], M.stress[`${pos}|${n}`], M.stress[pos]].find(enough) || { none: 1 };
+  const off = forgePick(tab), idx = off === "none" ? -1 : n + parseInt(off, 10);
+  const vv = vs.map((v, i) => i === idx && idx >= 0 ? FORGE_ACC[v[0]] + v.slice(1) : v);
+  let word = lead; vv.forEach((v, i) => { word += v + cs[i]; });
+  // the ROOT is everything before the ending (it stays consonant-final, like eskol- or suv-); the ending is the rest
+  const rootLen = (lead + vs.slice(0, -1).map((v, i) => v + cs[i]).join("")).length;
+  return { word, lead, vs, cs, rv, rc, off, root: word.slice(0, rootLen), ending: word.slice(rootLen) };   // root keeps its stress mark if it carries one
+}
+// Hard rules. Returns { ok, checks:[{ok,label}], nearest }
+function forgeRootChecks(c, pos, M) {
+  const checks = [], plain = forgeStrip(c.word), r = forgeRuns(c.word), n = r.v.length, ph = forgePhon(c.word);
+  const add = (ok, label) => checks.push({ ok, label });
+  if (!n) return { ok: false, checks: [{ ok: false, label: "Needs at least one vowel" }], nearest: { d: 0, w: "" }, n };
+  add(M.lead[r.lead] > 0, `Opens with ${r.lead ? "“" + r.lead + "”" : "a vowel"} — attested word-initially (${M.lead[r.lead] || 0} words)`);
+  const badMed = r.c.slice(0, -1).filter(x => !M.medAll[x]);
+  add(!badMed.length, `Medial consonant groups ${r.c.slice(0, -1).map(x => "“" + x + "”").join(", ") || "(none)"} all occur between vowels in the lexicon`);
+  add(r.v.every(v => M.vrun[v]), `Vowel sequences ${r.v.join(", ")} all attested`);
+  add(M.rime[pos][r.v[n - 1] + "|" + r.c[n - 1]] > 0, pos === "VERB"
+    ? `Ends in the regular infinitive -ár (${M.rime.VERB["a|r"] || 0} verbs), the only verb shape the conjugation system handles`
+    : `Ends in “${forgeStrip(c.word).match(/[aeiou]+[^aeiou]*$/)[0]}”, a real ${pos === "NOUN" ? "noun" : "adjective"} ending (${M.rime[pos][r.v[n - 1] + "|" + r.c[n - 1]] || 0} words)`);
+  add(n >= 1 && n <= 4 && M.nsyl[n] > 0, `${n} syllable${n > 1 ? "s" : ""} — within the attested 1–4`);
+  add(!/(.)\1\1/.test(plain) && !/[aeiou]{3}/.test(plain), "No tripled letters or vowel strings");
+  add(c.off === "none" || (M.stress[`${pos}`] && true), c.off === "none" ? "Unmarked stress, as for many words of this shape" : `Stress marked on syllable ${Math.abs(parseInt(c.off, 10))} from the end, a pattern this ending takes`);
+  const clash = forgeExists(c.word);
+  const an = clash ? null : analyzeWordMorphology(c.word);
+  add(!clash && !an, clash ? `Already a word: ${clash.k}` : "Not an existing word, and the analyzer doesn't read it as an inflected form of one");
+  let nearest = { d: 99, w: "" };
+  M.words.forEach(w => { if (Math.abs(w.length - plain.length) <= 2) { const d = forgeLev(plain, w); if (d < nearest.d) nearest = { d, w }; } });
+  add(nearest.d >= 2, `Not a near-homophone: closest existing word is “${nearest.w}” (${nearest.d} sound${nearest.d === 1 ? "" : "s"} apart)`);
+  if (!window._forgeDerSet || window._forgeDerSet.n !== M.n) {
+    const set = new Set(), sufs = forgeSuffixIndex();
+    CORE_DICT.filter(x => x.t === "VERB" && /(ár|ar)$/.test(x.k) && !x._forged).forEach(v => sufs.forEach(s => set.add(forgeStrip(forgeDerive(v, s, "").k))));
+    window._forgeDerSet = { n: M.n, set };
+  }
+  add(!window._forgeDerSet.set.has(plain), "Doesn't coincide with a regular verb-derived form");
+  let inflOk = true, inflNote = "";
+  if (pos === "NOUN") {                       // every case/number form must stay clear of other words
+    const f = declineNounForms(c.word), forms = [].concat(...Object.values(f));
+    const bad = forms.find(x => x && x !== c.word && (forgeExists(x) || analyzeWordMorphology(x)));
+    inflOk = !bad; inflNote = bad ? `its form “${bad}” already belongs to another word` : "";
+  }
+  add(inflOk, pos === "NOUN" ? (inflOk ? "None of its declined forms collides with another word" : "Declension collision: " + inflNote) : "Infinitive form is unique");
+  return { ok: checks.every(x => x.ok), checks, nearest, n };
+}
+// Phonetic similarity (0–1): shared sound bigrams blended with edit distance.
+function forgeSim(a, b) {
+  const bg = w => { const p = forgePhon(w), o = new Set(); for (let i = 0; i < p.length - 1; i++) o.add(p[i] + p[i + 1]); return o; };
+  const A = bg(a), B = bg(b); let inter = 0; A.forEach(x => { if (B.has(x)) inter++; });
+  const dice = A.size + B.size ? (2 * inter) / (A.size + B.size) : 0, pa = forgeStrip(a), pb = forgeStrip(b);
+  return 0.5 * dice + 0.5 * (1 - forgeLev(pa, pb) / Math.max(pa.length, pb.length));
+}
+function forgeMintRoots(pos, nWanted, count, soundsLike, startsWith, endKey) {
+  const M = forgeModel(), seed = new Set(), seedWords = soundsLike.split(/[\s,]+/).filter(Boolean);
+  seedWords.forEach(w => { const r = forgeRuns(w); seed.add(r.lead); r.v.forEach(v => seed.add(v)); r.c.forEach(c => seed.add(c)); });
+  const pool = [], seen = new Set(), rej = {}, acc = {};
+  const total = Object.values(M.nsyl).reduce((a, b) => a + b, 0);
+  const want = seedWords.length ? count * 4 : count;      // with a seed, gather extra and keep the closest
+  // nWanted counts ROOT syllables; the ending adds one more vowel group, and a root needs at least one vowel
+  const nPick = () => nWanted ? nWanted + 1 : Math.max(2, +forgePick(M.nsyl));
+  for (let t = 0; t < 2500 && pool.length < want; t++) {
+    const n = nPick();
+    // keep the batch's length mix close to the lexicon's (short roots are scarce: the space is crowded)
+    if (!nWanted && !seedWords.length && pool.length >= 4 && (acc[n] || 0) / pool.length > (M.nsyl[n] || 0) / total + 0.12) continue;
+    const c = forgeBuildRoot(pos, n, M, seed.size ? seed : null, endKey || null), key = forgeStrip(c.word);
+    if (seen.has(key)) continue; seen.add(key);
+    if (startsWith && !key.startsWith(forgeStrip(startsWith))) { rej.start = (rej.start || 0) + 1; continue; }
+    const res = forgeRootChecks(c, pos, M);
+    if (!res.ok) { const why = res.checks.find(x => !x.ok).label.split(":")[0].split(" — ")[0]; rej[why] = (rej[why] || 0) + 1; continue; }
+    const e = forgeRootEntry(c, pos, M, res, endKey);
+    if (seedWords.length) { e.sim = Math.max(...seedWords.map(w => forgeSim(c.word, w))); e.simTo = seedWords.reduce((best, w) => forgeSim(c.word, w) > forgeSim(c.word, best) ? w : best, seedWords[0]); }
+    acc[n] = (acc[n] || 0) + 1; pool.push(e);
+  }
+  if (seedWords.length) pool.sort((x, y) => y.sim - x.sim);
+  return { out: pool.slice(0, count), rej, tried: seen.size };
+}
+const FORGE_TYPENAME = { NOUN: "noun", VERB: "verb", ADJ: "adjective" };
+function forgeRootEntry(c, pos, M, res, endKey) {
+  const tn = FORGE_TYPENAME[pos], plainEnd = c.rv + c.rc, cnt = M.rime[pos][c.rv + "|" + c.rc] || 0;
+  const inner = c.vs.slice(0, -1).map((v, i) => `“${c.cs[i]}” after ${v.slice(-1)}`);
+  const sound = (c.lead ? `opens with “${c.lead}”` : "opens with a vowel") + (inner.length ? ", then " + inner.join(", ") : "");
+  const parts = [
+    { form: c.root, label: "root (no ending)", note: `${sound} — every group is attested in the lexicon` },
+    { form: c.ending, label: "ending · " + tn, note: `${cnt} ${tn}s in the dictionary end in -${plainEnd}${pos === "VERB" ? " (the regular infinitive)" : ""} — ${endKey ? "the ending you chose" : "added automatically as a typical " + tn + " ending"}` } ];
+  return { k: c.word, t: pos, e: "", how: "root", root: c.root, ending: c.ending, parts, checks: res.checks, off: c.off,
+    explain: `A fresh ${tn} root, ${c.root}-, built only from sound patterns that occur in the lexicon. Because you asked for a ${tn}, the ending -${c.ending} was attached automatically, giving ${c.word}. The full form was then vetted (below); the meaning is yours to assign.` };
+}
+function forgeEndingsFor(pos) {
+  return Object.entries(forgeModel().rime[pos] || {}).sort((a, b) => b[1] - a[1]).map(([key, n]) => ({ key, plain: key.replace("|", ""), n }));
+}
+function forgeRefreshEndings() {
+  const t = document.getElementById("forge-rg-type").value, sel = document.getElementById("forge-rg-end"); if (!sel) return;
+  const nm = { NOUN: "nouns", ADJ: "adjectives", VERB: "verbs" }[t];
+  sel.innerHTML = `<option value="">Ending: automatic (typical for ${nm})</option>` +
+    forgeEndingsFor(t).map(e => `<option value="${e.key}">-${t === "VERB" ? "ár (regular infinitive)" : e.plain} · ${e.n} ${nm}</option>`).join("");
+}
+function forgeRootGen() {
+  const v = id => (document.getElementById(id) || {}).value || "", pos = v("forge-rg-type"), box = document.getElementById("forge-rootgen");
+  if (!["NOUN", "VERB", "ADJ"].includes(pos)) { box.innerHTML = ""; return; }
+  if (!forgeEndingsFor(pos).length) { box.innerHTML = `<p style="color:#e08080;margin-top:0.7rem;">Not enough vocabulary is loaded to learn Kestelál's sound patterns. Load the full dictionary.json first.</p>`; return; }
+  const res = window._forgeRoots = forgeMintRoots(pos, +v("forge-rg-syl"), +v("forge-rg-count") || 8, v("forge-rg-like"), v("forge-rg-start").trim(), v("forge-rg-end"));
+  box.innerHTML = res.out.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.7rem;">` + res.out.map((e, i) => `<button class="btn" style="padding:0.4rem 0.8rem;text-align:left;" onclick="forgeUseRoot(${i})"><span style="font-size:1.05rem;"><span style="opacity:0.8">${forgeEsc(e.root)}</span><b style="color:var(--gold-light)">${forgeEsc(e.ending)}</b></span><br><span style="font-size:0.68rem;opacity:0.75;">root ${forgeEsc(e.root)}- + ending · ✓ ${e.checks.length}${e.sim !== undefined ? " · " + Math.round(e.sim * 100) + "% like " + forgeEsc(e.simTo) : ""}</span></button>`).join("") + `</div>
+       <p style="color:var(--text-dim);font-size:0.78rem;margin-top:0.5rem;">Each button is a bare root (plain) with the ${FORGE_TYPENAME[pos]} ending added automatically (gold). Click one to see every rule it passed, give it a meaning, and keep it. Generate again for a fresh batch.</p>`
+    : `<p style="color:#e08080;margin-top:0.7rem;">No valid root found${v("forge-rg-start") ? " starting with “" + forgeEsc(v("forge-rg-start")) + "” — that opening may not be possible in Kestelál" : ""}. Try loosening the constraints.</p>`;
+}
+function forgeUseRoot(i) {
+  const e = (window._forgeRoots || { out: [] }).out[i]; if (!e) return;
+  e.e = document.getElementById("forge-concept").value.trim();
+  forgeShow(e); document.getElementById("forge-result-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function forgePhonologyHtml() {
+  const M = forgeModel(), top = (o, k = 14) => Object.entries(o).filter(([x]) => x).sort((a, b) => b[1] - a[1]).slice(0, k).map(([x, n]) => `${x} <span style="opacity:.6">${n}</span>`).join(" · ");
+  const vs = Object.keys(M.vrun).filter(v => v.length === 1).sort().join(" "), cons = [...new Set(Object.keys(M.lead).concat(Object.keys(M.medAll), Object.keys(M.fin)).join("").replace(/th/g, "").split(""))].filter(c => !FORGE_V.has(c)).sort().join(" ");
+  return `<details style="margin-top:0.7rem;"><summary style="cursor:pointer;color:var(--gold);font-size:0.82rem;">Phonology learned from the dictionary (${M.words.length} words)</summary>
+    <div style="font-size:0.8rem;color:var(--text-dim);line-height:1.6;margin-top:0.4rem;">
+      <div><strong>Vowels:</strong> ${vs} (stress marked with an acute) · <strong>Consonants:</strong> ${cons} + th</div>
+      <div><strong>Word-initial groups:</strong> ${top(M.lead, 16)}</div>
+      <div><strong>Between vowels:</strong> ${top(M.medAll, 22)}</div>
+      <div><strong>Word-final groups:</strong> ${top(M.fin, 10)}</div>
+      <div><strong>Syllables per word:</strong> ${Object.entries(M.nsyl).sort().map(([k, n]) => k + ": " + n).join(" · ")}</div></div></details>`;
+}
+
+
+// ── Root families ──────────────────────────────────────────────────────────────
+// Kestelál words that share a root are related by their ending (eskol-ár "teach", eskol-ét "teacher",
+// eskol-át "lesson"). The family index is mined live from the dictionary: every word is split into
+// root + ending, words sharing a root are grouped, and for each "root of type X → word of type Y with
+// ending E" we count how many separate root families show it. Proposals for a freshly minted root are
+// those patterns, ranked by evidence, conditioned on the root's own word type.
+Object.assign(FORGE_ROLES, { "ADJ:ul": "full of / afflicted by", "ADJ:el": "pertaining to", "VERB:ar": "verb (regular infinitive)", "VERB:iar": "to make or get (from a noun)" });
+function forgeFamilyIndex() {
+  if (window._forgeFI && window._forgeFI.n === CORE_DICT.length) return window._forgeFI;
+  const groups = {};
+  CORE_DICT.forEach(x => {
+    if (x._forged || !["NOUN", "VERB", "ADJ"].includes(x.t)) return;
+    const k = x.k.normalize("NFC"); if (!/^[a-záéíóú]+$/i.test(k)) return;
+    const r = forgeRuns(k), n = r.v.length; if (!n) return;
+    const rime = r.v[n - 1] + r.c[n - 1], rl = k.length - rime.length, root = forgeStrip(k).slice(0, rl);
+    if (root.length < 3 || !/[aeiou]/.test(root)) return;
+    (groups[root] = groups[root] || []).push({ t: x.t, k, e: x.e, rime, tail: k.slice(rl) });
+  });
+  const T = {};
+  const add = (src, b, a, root) => {
+    const key = src + ">" + b.t + ":" + b.rime;
+    const o = T[key] || (T[key] = { src, dst: b.t, rime: b.rime, fams: new Set(), tails: {}, ex: [] });
+    if (o.fams.has(root)) return;
+    o.fams.add(root); o.tails[b.tail] = (o.tails[b.tail] || 0) + 1;
+    if (o.ex.length < 3) o.ex.push({ a: a.k, ae: a.e, b: b.k, be: b.e });
+  };
+  Object.entries(groups).forEach(([root, m]) => {
+    if (new Set(m.map(x => x.t + x.rime)).size < 2) return;
+    m.forEach(a => m.forEach(b => { if (a !== b && (a.t !== b.t || a.rime !== b.rime)) { add(a.t, b, a, root); add("*", b, a, root); } }));
+  });
+  const list = Object.values(T).map(o => ({ src: o.src, dst: o.dst, rime: o.rime, n: o.fams.size, ex: o.ex,
+    surface: Object.entries(o.tails).sort((x, y) => y[1] - x[1])[0][0] })).filter(o => o.n >= 2);
+  return (window._forgeFI = { n: CORE_DICT.length, list });
+}
+// Proposals for a root of word type `base`: other endings and types, strongest evidence first.
+// Patterns seen from roots of the same type come first; "any root" patterns fill in when those are thin.
+function forgeFamilyFor(base, ownRime) {
+  const idx = forgeFamilyIndex().list, out = [];
+  [["VERB", 2], ["NOUN", 8], ["ADJ", 6]].forEach(([U, max]) => {
+    if (U === "VERB" && base === "VERB") return;            // a verb root already is the verb
+    let c = idx.filter(o => o.src === base && o.dst === U && o.n >= 3);
+    if (c.length < 3) { const seen = new Set(c.map(o => o.rime)); c = c.concat(idx.filter(o => o.src === "*" && o.dst === U && o.n >= 3 && !seen.has(o.rime))); }
+    c = c.filter(o => !(U === base && o.rime === ownRime)).sort((a, b) => b.n - a.n);
+    out.push(...c.slice(0, max));
+  });
+  return out;
+}
+// ── English glosses (templates; the user always has the final say) ─────────────
+function engS(v) { const w = v.trim().split(" "), h = w[0]; w[0] = /[^aeiou]y$/.test(h) ? h.slice(0, -1) + "ies" : /(s|x|z|ch|sh|o)$/.test(h) ? h + "es" : h + "s"; return w.join(" "); }
+function engIng(v) {
+  const w = v.trim().split(" "); let h = w[0];
+  if (/ie$/.test(h)) h = h.slice(0, -2) + "ying"; else if (/[^e]e$/.test(h)) h = h.slice(0, -1) + "ing";
+  else if (/^[^aeiou]*[aeiou][^aeiouwxy]$/.test(h) && h.length <= 4) h = h + h.slice(-1) + "ing"; else h += "ing";
+  w[0] = h; return w.join(" ");
+}
+// [from a verb root, from a noun root, from an adjective root]
+const FORGE_FAM_GLOSS = {
+  "NOUN:et":  ["one who {s}", "one associated with {n}", "one who is {a}"],
+  "NOUN:at":  ["act or result of {ing}", "act or product of {n}", "the act of being {a}"],
+  "NOUN:eras": ["process or event of {ing}", "process of {n}", "process of becoming {a}"],
+  "NOUN:as":  ["result or idea of {ing}", "the abstract idea of {n}", "state or degree of being {a}"],
+  "NOUN:os":  ["thing made or used in {ing}", "object connected with {n}", "thing that is {a}"],
+  "NOUN:es":  ["quality or outcome of {ing}", "quality of {n}", "quality of being {a}"],
+  "NOUN:us":  ["concept or choice of {ing}", "idea of {n}", "idea of being {a}"],
+  "NOUN:ot":  ["instance or example of {ing}", "instance of {n}", "instance of being {a}"],
+  "NOUN:*":   ["noun related to {ing}", "noun related to {n}", "noun for being {a}"],
+  "ADJ:al":   ["characterised by {ing}", "of or relating to {n}", "somewhat {a}"],
+  "ADJ:il":   ["capable of {ing}", "like or characterised by {n}", "{a}, to a lesser degree"],
+  "ADJ:at":   ["given to {ing}", "like or full of {n}", "{a}-ish"],
+  "ADJ:ul":   ["full of {ing}", "full of or afflicted by {n}", "very {a}"],
+  "ADJ:el":   ["pertaining to {ing}", "pertaining to {n}", "pertaining to being {a}"],
+  "ADJ:*":    ["adjective related to {ing}", "relating to {n}", "related to {a}"],
+  "VERB:ar":  ["to {v}", "to make, use or become {n}", "to become or make {a}"],
+  "VERB:*":   ["to {v}", "to make or get {n}", "to make or get {a}"] };
+function forgeFamGloss(base, dst, rime, concept) {
+  const c = (concept || "").split(/[,;]/)[0].trim(); if (!c) return "";
+  const v = c.replace(/^to\s+/i, ""), n = c.replace(/^(a|an|the)\s+/i, ""), bi = { VERB: 0, NOUN: 1, ADJ: 2 }[base];
+  const t = (FORGE_FAM_GLOSS[dst + ":" + rime] || FORGE_FAM_GLOSS[dst + ":*"])[bi];
+  return t.replace("{ing}", base === "VERB" ? engIng(v) : base === "NOUN" ? n : c).replace("{s}", engS(v)).replace("{v}", v).replace("{n}", n).replace("{a}", c);
+}
+// Each proposed word is vetted: not an existing word, not read by the analyzer as another word's form,
+// and (nouns) none of its declined forms collides with another word.
+function forgeFamilyCheck(word, t) {
+  const ex = forgeExists(word); if (ex) return { ok: false, exists: ex, why: `already a word: ${ex.e}` };
+  if (analyzeWordMorphology(word)) return { ok: false, why: "the analyzer already reads it as a form of another word" };
+  if (t === "NOUN") {
+    const bad = [].concat(...Object.values(declineNounForms(word))).find(x => x && x !== word && (forgeExists(x) || analyzeWordMorphology(x)));
+    if (bad) return { ok: false, why: `its form “${bad}” already belongs to another word` };
+  }
+  return { ok: true };
+}
+function forgeFamilyRows(entry) {
+  const rootPlain = forgeAccent(entry.root, "none"), base = entry.t, ownRime = forgeRuns(entry.k).v.slice(-1)[0] + forgeRuns(entry.k).c.slice(-1)[0];
+  return forgeFamilyFor(base, ownRime).map(o => {
+    const k = rootPlain + o.surface, chk = forgeFamilyCheck(k, o.dst), x = o.ex[0];
+    return { k, t: o.dst, rime: o.rime, root: rootPlain, ending: o.surface, n: o.n, role: FORGE_ROLES[o.dst + ":" + o.rime] || null,
+      evidence: `${o.n} root families, e.g. ${x.a} “${forgeGloss1(x.ae)}” → ${x.b} “${forgeGloss1(x.be)}”`,
+      gloss: forgeFamGloss(base, o.dst, o.rime, entry.e), chk, on: false };
+  });
+}
+function forgeFamSync() {
+  (window._forgeFam || { rows: [] }).rows.forEach((r, i) => {
+    const g = document.getElementById("fam-g-" + i), c = document.getElementById("fam-c-" + i);
+    if (g) r.gloss = g.value; if (c) r.on = c.checked;
+  });
+}
+function forgeRenderFamily(entry, fresh, skipSync) {
+  const box = document.getElementById("forge-family"); if (!box) return;
+  if (fresh || !window._forgeFam || window._forgeFam.k !== entry.k) window._forgeFam = { k: entry.k, rows: forgeFamilyRows(entry) };
+  else { if (!skipSync) forgeFamSync(); window._forgeFam.rows.forEach(r => { r.chk = forgeFamilyCheck(r.k, r.t); if (!r.chk.ok) r.on = false; }); }
+  const F = window._forgeFam, nm = { VERB: "Verb", NOUN: "Nouns", ADJ: "Adjectives" };
+  let h = `<div style="border-top:1px solid var(--border);margin-top:1.1rem;padding-top:0.9rem;">
+    <div style="font-family:'Cinzel',serif;color:var(--gold-light);margin-bottom:0.3rem;">Root family · <span style="color:var(--green-light);">${forgeEsc(forgeAccent(entry.root, "none"))}-</span></div>
+    <p style="color:var(--text-dim);font-size:0.82rem;margin-bottom:0.6rem;">Other words this root can form in Kestelál. Each ending below is one the dictionary already uses to relate ${entry.t === "NOUN" ? "nouns" : entry.t === "VERB" ? "verbs" : "adjectives"} to other word types (evidence shown). The English meanings are only suggested templates — edit every one before keeping.</p>
+    <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+      <button class="btn" style="padding:0.25rem 0.7rem;font-size:0.75rem;" onclick="forgeFamTick(true)">Tick all new</button>
+      <button class="btn" style="padding:0.25rem 0.7rem;font-size:0.75rem;" onclick="forgeFamTick(false)">Tick none</button>
+      <button class="btn" style="padding:0.25rem 0.7rem;font-size:0.75rem;" onclick="forgeFamRefill()" title="Rewrite all suggested meanings from the meaning above">↻ Refill meanings</button></div>`;
+  ["VERB", "NOUN", "ADJ"].forEach(U => {
+    const rows = F.rows.map((r, i) => [r, i]).filter(([r]) => r.t === U); if (!rows.length) return;
+    h += `<div style="color:var(--amber);font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin:0.7rem 0 0.2rem;">${nm[U].toUpperCase()}</div>`;
+    rows.forEach(([r, i]) => {
+      const dead = !r.chk.ok;
+      h += `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:0.5rem 0.7rem;margin-bottom:0.4rem;${dead ? "opacity:0.5;" : ""}">
+        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;">
+          <input type="checkbox" id="fam-c-${i}" ${r.on ? "checked" : ""} ${dead ? "disabled" : ""}>
+          <span style="font-family:'Cinzel',serif;font-size:1.05rem;${r.chk.exists ? "text-decoration:line-through;" : ""}"><span style="opacity:0.8">${forgeEsc(r.root)}</span><b style="color:var(--gold-light)">${forgeEsc(r.ending)}</b></span>
+          <span style="color:var(--text-dim);font-size:0.78rem;">${forgeEsc(r.role || "")}</span>
+          <input type="text" id="fam-g-${i}" value="${forgeEsc(r.gloss)}" placeholder="Your meaning…" ${dead ? "disabled" : ""} style="flex:1;min-width:11rem;"></div>
+        <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.25rem;">${dead ? "✗ " + forgeEsc(r.chk.why) : "✓ new word · " + forgeEsc(r.evidence)}</div></div>`;
+    });
+  });
+  if (!F.rows.length) h += `<p style="color:var(--text-dim);font-style:italic;">The dictionary shows no recurring derivations for this word type yet.</p>`;
+  h += `<button class="btn" style="margin-top:0.5rem;" onclick="forgeFamKeep()">Keep ticked words</button></div>`;
+  box.innerHTML = h;
+}
+function forgeFamTick(on) { forgeFamSync(); window._forgeFam.rows.forEach(r => { r.on = on && r.chk.ok; }); forgeRenderFamily(window._forgeCur, false, true); }
+function forgeFamRefill() {
+  forgeFamSync(); const e = window._forgeCur;
+  window._forgeFam.rows.forEach(r => { r.gloss = forgeFamGloss(e.t, r.t, r.rime, e.e); });
+  forgeRenderFamily(e, false, true);
+}
+function forgeFamKeep() {
+  forgeFamSync(); const F = window._forgeFam, picked = F.rows.filter(r => r.on && r.chk.ok);
+  if (!picked.length) { toast("Tick at least one word first."); return; }
+  if (picked.some(r => !r.gloss.trim())) { toast("Give every ticked word a meaning first."); return; }
+  const live = (document.getElementById("forge-live") || { checked: true }).checked;
+  let list = forgeLoad();
+  picked.forEach(r => {
+    list = list.filter(x => !(x.k === r.k && x.t === r.t));
+    list.push({ k: r.k, t: r.t, e: r.gloss.trim(), cls: "", how: "root family", want: "", root: r.root });
+    if (live && !CORE_DICT.some(x => x.k === r.k && x.t === r.t)) CORE_DICT.push({ k: r.k, t: r.t, e: r.gloss.trim(), _forged: true });
+  });
+  forgeSave(list); forgeRenderList(); if (typeof renderDict === "function") renderDict();
+  forgeRenderFamily(window._forgeCur);
+  toast(`Kept ${picked.length} word${picked.length > 1 ? "s" : ""} from the root family.`);
+}
+
+// ── UI ─────────────────────────────────────────────────────────────────────────
+function forgeWantsList() { return wantsRanked().filter(w => w.dir !== "kes"); }
+function forgeRefreshWants() {
+  let sel = document.getElementById("forge-want"); if (!sel) return;
+  let cur = sel.value;
+  sel.innerHTML = `<option value="">— take a concept from Wants —</option>` + forgeWantsList().map(w =>
+    `<option value="${encodeURIComponent(w.word)}">${forgeEsc(w.word)}${w.forged ? " ⚒ " + forgeEsc(w.forged.k) : ""}  (×${w.count})</option>`).join("");
+  sel.value = cur;
+}
+function forgeWantChanged() {
+  let v = document.getElementById("forge-want").value;
+  if (v) { document.getElementById("forge-concept").value = decodeURIComponent(v); forgeFind(); }
+}
+function forgeFromWant(enc) {
+  document.querySelector('.tab-btn[data-tab="forge"]').click();
+  forgeRefreshWants();
+  document.getElementById("forge-want").value = enc;
+  document.getElementById("forge-concept").value = decodeURIComponent(enc);
+  forgeFind();
+}
+function forgeFind() {
+  const concept = document.getElementById("forge-concept").value.trim();
+  const pos = document.getElementById("forge-pos").value;
+  const box = document.getElementById("forge-options");
+  if (!concept) { box.innerHTML = ""; return; }
+  // The app falls back to a tiny built-in starter list when dictionary.json can't be fetched
+  // (e.g. the page was opened straight from disk); the Forge needs the full lexicon.
+  const thin = CORE_DICT.filter(x => !x._forged).length < 200;
+  const loadHint = thin ? `<div style="border:1px solid rgba(224,128,128,0.5);border-radius:var(--radius);padding:0.7rem 0.9rem;margin-top:0.9rem;color:#e08080;">
+      Only ${CORE_DICT.filter(x => !x._forged).length} starter words are loaded, so the Forge has almost nothing to build from.
+      <label class="btn" style="margin-left:0.5rem;cursor:pointer;display:inline-block;">Load dictionary.json<input type="file" accept=".json" style="display:none" onchange="loadDictFile(this);setTimeout(forgeFind,600)"></label></div>` : "";
+  if (!CORE_DICT.some(x => !x._forged)) { box.innerHTML = loadHint; return; }
+  const matches = forgeMatches(concept, pos === "ANY" ? "" : pos);
+  const sugg = window._forgeSug = forgeSuggest(concept, pos);
+  const dType = pos === "ADJ" ? "ADJ" : "NOUN";
+  const typeSel = (id, cur, opts, onch) => `<select id="${id}" style="width:100%" onchange="${onch}">` + opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("") + `</select>`;
+  const sec = (n, t, body) => `<div style="border-top:1px solid var(--border);padding-top:0.8rem;margin-top:0.9rem;"><div style="font-family:'Cinzel',serif;color:var(--gold-light);margin-bottom:0.4rem;">${n} · ${t}</div>${body}</div>`;
+  const dim = "color:var(--text-dim);font-size:0.82rem;margin-bottom:0.5rem;";
+  let h = pos === "VERB" ? "" : sec("★", "Suggested new words", sugg.length
+    ? `<p style="${dim}">Forms not yet in the dictionary — each is a root (plain) plus its ending (gold). Click one to inspect and keep it.</p><div style="display:flex;flex-wrap:wrap;gap:0.5rem;">` +
+      sugg.map((c, i) => `<button class="btn" style="padding:0.4rem 0.8rem;text-align:left;" onclick="forgeUseSuggestion(${i})"><span style="font-size:1.05rem;">${c.how === "derived" ? `<span style="opacity:0.8">${forgeEsc(c.parts[0].form)}</span><b style="color:var(--gold-light)">${forgeEsc(c.parts[1].form)}</b>` : forgeEsc(c.k)}</span><br><span style="font-size:0.68rem;opacity:0.75;">${forgeEsc(c.how === "compound" ? "compound" : (c.parts[1].note.split(" · ")[0]))}</span></button>`).join("") + `</div>`
+    : `<p style="color:var(--text-dim);font-style:italic;">No verb in the lexicon relates to “${forgeEsc(concept)}”, so nothing can be suggested automatically. Use the manual options below${pos === "NOUN" ? " (try two words like <em>fire wizard</em> for a compound)" : ""}, or mint a fresh root.</p>`);
+  h += sec(1, "Already in the tongue", matches.length
+    ? matches.map(x => `<div style="padding:0.2rem 0;"><span class="de-word">${forgeEsc(x.k)}</span> <span style="color:var(--amber);font-size:0.72rem;">${x.t}</span> <span style="color:var(--text-dim);font-style:italic;">${forgeEsc(x.e)}</span></div>`).join("") +
+      `<p style="color:var(--text-dim);font-size:0.8rem;margin-top:0.4rem;">Prefer an existing word if one of these fits.</p>`
+    : `<p style="color:var(--text-dim);font-style:italic;">No dictionary entry matches “${forgeEsc(concept)}”.</p>`);
+  h += sec(2, "Derive from a verb root", `
+      <p style="${dim}">Choose the word type and a base verb. The verb's root (its stem, without <em>-ár</em>) automatically gets every ending attested for that type; forms already in the dictionary are struck through.</p>
+      <div class="grid-2">
+        ${typeSel("forge-dtype", dType, [["NOUN", "Word type: Noun"], ["ADJ", "Word type: Adjective"]], "forgeRefreshSuffixes()")}
+        <input type="text" id="forge-verb-filter" placeholder="Filter verbs by meaning or form" value="${forgeEsc(forgeTokens(concept)[0] || "")}" oninput="forgeFillVerbs()">
+      </div>
+      <select id="forge-verb" style="width:100%;margin-top:0.5rem;" onchange="forgeRefreshSuffixes()"></select>
+      <div id="forge-dforms" style="margin-top:0.6rem;"></div>
+      <p style="${dim}margin-top:0.6rem;">Or choose one ending yourself:</p>
+      <select id="forge-suffix" style="width:100%;"></select>
+      <button class="btn" style="margin-top:0.6rem" onclick="forgeDoDerive()">Forge with selected ending</button>`);
+  h += sec(3, "Compound of two roots (nouns)", `
+      <p style="${dim}">Type a Kestelál root or an English meaning for each part (modifier first, head last, e.g. <em>house</em> + <em>gate</em>).</p>
+      <div class="grid-2"><input type="text" id="forge-mod" placeholder="Modifier (e.g. kas / house)"><input type="text" id="forge-head" placeholder="Head (e.g. kade / gate)"></div>
+      <button class="btn" style="margin-top:0.6rem" onclick="forgeDoCompound()">Forge compound</button>`);
+  h += sec(4, "Mint a new root", `
+      <p style="${dim}">When nothing fits, coin an entirely new root. Pick the word type: the generator makes a bare root from sound patterns the language already uses, then attaches the right ending for that type. Every result is checked against the grammar before it is shown.</p>
+      <div class="grid-2">
+        ${typeSel("forge-rg-type", pos === "VERB" || pos === "ADJ" ? pos : "NOUN", [["NOUN", "Word type: Noun"], ["ADJ", "Word type: Adjective"], ["VERB", "Word type: Verb"]], "forgeRefreshEndings()")}
+        <select id="forge-rg-end" style="width:100%"></select>
+        <select id="forge-rg-syl" style="width:100%"><option value="0">Root length: any</option><option value="1">Root: 1 syllable</option><option value="2">Root: 2 syllables</option><option value="3">Root: 3 syllables</option></select>
+        <select id="forge-rg-count" style="width:100%"><option value="8">8 roots</option><option value="4">4 roots</option><option value="16">16 roots</option></select>
+        <input type="text" id="forge-rg-like" placeholder="Sounds like… (Kestelál words, optional)">
+        <input type="text" id="forge-rg-start" placeholder="Root starts with… (optional)">
+      </div>
+      <button class="btn" style="margin-top:0.6rem" onclick="forgeRootGen()">Generate roots</button>
+      <div id="forge-rootgen"></div>` + forgePhonologyHtml());
+  box.innerHTML = loadHint + h;
+  forgeRefreshEndings(); forgeFillVerbs();
+}
+function forgeUseSuggestion(i) { const c = (window._forgeSug || [])[i]; if (c) { forgeShow(c); document.getElementById("forge-result-card").scrollIntoView({ behavior: "smooth", block: "nearest" }); } }
+// Ending list for the chosen verb; endings that would only recreate an existing word are marked, and a new one is preselected.
+function forgeDType() { return (document.getElementById("forge-dtype") || {}).value || "NOUN"; }
+function forgeCurVerb() { return CORE_DICT.find(x => x.t === "VERB" && x.k === document.getElementById("forge-verb").value); }
+function forgeRefreshSuffixes() {
+  const pos = forgeDType(), sel = document.getElementById("forge-suffix"), verb = forgeCurVerb();
+  const sufs = forgeSuffixIndex().filter(r => r.pos === pos); let first = -1;
+  sel.innerHTML = sufs.map((r, i) => {
+    const w = verb ? forgeDerive(verb, r, "").k : "", ex = w && forgeExists(w);
+    if (!ex && first < 0) first = i;
+    return `<option value="${i}">-${forgeEsc(r.surface)} — ${r.role || "unlabelled"} · ${r.n}×${verb ? " → " + forgeEsc(w) + (ex ? " (already exists)" : "") : ""}</option>`;
+  }).join("");
+  if (first >= 0) sel.value = String(first);
+  // the verb's root with every matching ending attached automatically
+  const box = document.getElementById("forge-dforms"); if (!box) return;
+  if (!verb) { box.innerHTML = ""; return; }
+  const stem = forgeAccent(verb.k.replace(/(ár|ar)$/, ""), "none"), nm = pos === "NOUN" ? "noun" : "adjective";
+  box.innerHTML = `<div style="font-size:0.85rem;margin-bottom:0.4rem;">Root <b style="color:var(--green-light);">${forgeEsc(stem)}-</b> <span style="color:var(--text-dim);">(${forgeEsc(verb.k)} “${forgeEsc(forgeGloss1(verb.e))}”) with every ${nm} ending:</span></div><div style="display:flex;flex-wrap:wrap;gap:0.5rem;">` +
+    sufs.map((r, i) => {
+      const w = forgeDerive(verb, r, "").k, ex = forgeExists(w);
+      const inner = `<span style="font-size:1.0rem;"><span style="opacity:0.8">${forgeEsc(stem)}</span><b style="color:var(--gold-light)">${forgeEsc(r.surface)}</b></span><br><span style="font-size:0.66rem;opacity:0.75;">${forgeEsc(r.role || "unlabelled")}${ex ? " · exists: " + forgeEsc(forgeGloss1(ex.e)) : ""}</span>`;
+      return ex ? `<span class="btn" style="padding:0.35rem 0.7rem;opacity:0.45;cursor:default;text-decoration:line-through;text-decoration-color:rgba(255,255,255,0.3);">${inner}</span>`
+                : `<button class="btn" style="padding:0.35rem 0.7rem;text-align:left;" onclick="forgeUseDerived(${i})">${inner}</button>`;
+    }).join("") + `</div>`;
+}
+function forgeUseDerived(i) {
+  const verb = forgeCurVerb(), rec = forgeSuffixIndex().filter(r => r.pos === forgeDType())[i]; if (!verb || !rec) return;
+  forgeShow(forgeDerive(verb, rec, forgeConceptGloss())); document.getElementById("forge-result-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function forgeFillVerbs() {
+  const f = forgeStrip(document.getElementById("forge-verb-filter").value.trim());
+  const sel = document.getElementById("forge-verb"); if (!sel) return;
+  const allV = CORE_DICT.filter(x => x.t === "VERB" && /(ár|ar)$/.test(x.k) && !x._forged);
+  let vs = allV.filter(x => !f || forgeStrip(x.k + " " + x.e).includes(f));
+  if (!vs.length) vs = allV;            // filter matched nothing: show every verb rather than an empty list
+  vs = vs.slice(0, 80);
+  sel.innerHTML = vs.length ? vs.map(v => `<option value="${forgeEsc(v.k)}">${forgeEsc(v.k)} — ${forgeEsc(forgeGloss1(v.e))}</option>`).join("") : `<option value="">(no verbs match)</option>`;
+  forgeRefreshSuffixes();
+}
+function forgeConceptGloss() { return document.getElementById("forge-concept").value.trim(); }
+function forgeDoDerive() {
+  const pos = forgeDType();
+  const verb = CORE_DICT.find(x => x.t === "VERB" && x.k === document.getElementById("forge-verb").value);
+  const rec = forgeSuffixIndex().filter(r => r.pos === pos)[+document.getElementById("forge-suffix").value];
+  if (!verb || !rec) { forgeShow(null, "Pick a base verb and an ending first."); return; }
+  forgeShow(forgeDerive(verb, rec, forgeConceptGloss()));
+}
+function forgeDoCompound() {
+  const mod = forgeResolve(document.getElementById("forge-mod").value, ["NOUN", "ADJ", "VERB"]);
+  const head = forgeResolve(document.getElementById("forge-head").value, ["NOUN", "VERB"]);
+  if (!mod || !head) { forgeShow(null, "Couldn't find " + (!mod ? "the modifier" : "the head") + " in the dictionary — try the Kestelál form or a listed English meaning."); return; }
+  forgeShow(forgeCompound(mod, head, forgeConceptGloss()));
+}
+function forgeShow(entry, err) {
+  const card = document.getElementById("forge-result-card"), box = document.getElementById("forge-result");
+  card.style.display = "block";
+  if (!entry) { box.innerHTML = `<p style="color:#e08080;">${forgeEsc(err)}</p>`; window._forgeCur = null; return; }
+  window._forgeCur = entry;
+  // Round-trip through the existing analyzer: temporarily register, analyse, unregister.
+  const probe = { k: entry.k, t: entry.t, e: entry.e || "?" };
+  CORE_DICT.push(probe); let an = analyzeWordMorphology(entry.k); CORE_DICT.pop();
+  const clash = forgeExists(entry.k);
+  const cls = entry.t === "NOUN" ? detectNounClass(entry.k) : null;
+  let para = "";
+  if (entry.t === "NOUN") {
+    const f = declineNounForms(entry.k);
+    para = `<div class="table-scroll"><table><thead><tr><th>Case</th><th>Singular</th><th>Plural</th></tr></thead><tbody>` +
+      [["Nominative","nomSing","nomPlur"],["Accusative","accSing","accPlur"],["Genitive","genSing","genPlur"],["Instrumental","insSing","insPlur"]]
+        .map(r => `<tr><td class="td-kas">${r[0]}</td><td>${f[r[1]].join(" / ")}</td><td>${f[r[2]].join(" / ")}</td></tr>`).join("") + `</tbody></table></div>`;
+  }
+  const w = window._forgeWant = document.getElementById("forge-want").value;
+  box.innerHTML = `
+    <div style="text-align:center;margin-bottom:0.8rem;"><div style="font-family:'Cinzel',serif;font-size:1.7rem;color:var(--green-light);">${forgeEsc(entry.k)}</div>${kesScript(entry.k)}</div>
+    ${clash ? `<p style="color:#e08080;">⚠ “${forgeEsc(clash.k)}” already exists (${clash.t}: ${forgeEsc(clash.e)}). It can't be kept as-is — pick another ending or verb${document.getElementById("forge-options").innerHTML.includes("Suggested new words") ? " (see “Suggested new words”)" : ""}.</p>` : ""}
+    <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.7rem;">
+      <span style="color:var(--amber);font-family:'JetBrains Mono',monospace;font-size:0.78rem;">${entry.t}${cls ? " · class " + cls : ""} · ${entry.how}</span>
+      <input type="text" id="forge-gloss" value="${forgeEsc(entry.e)}" placeholder="Meaning / gloss" style="flex:1;min-width:12rem;" oninput="window._forgeCur.e=this.value">
+    </div>
+    <div style="margin-bottom:0.7rem;"><strong>Breakdown:</strong>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.4rem;">${entry.parts.map(p => `<div style="border:1px solid var(--gold-border);border-radius:var(--radius);padding:0.4rem 0.7rem;background:rgba(255,255,255,0.03);max-width:22rem;">
+        <div style="font-family:'Cinzel',serif;color:var(--green-light);">${forgeEsc(p.form)} <span style="color:var(--gold);font-size:0.7rem;font-family:'JetBrains Mono',monospace;">${p.label.toUpperCase()}</span></div>
+        <div style="font-size:0.78rem;color:var(--text-dim);font-style:italic;">${forgeEsc(p.note)}</div></div>`).join("")}</div></div>
+    <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:0.7rem;">${forgeEsc(entry.explain)}</p>
+    ${entry.checks ? `<div style="margin-bottom:0.7rem;"><strong>Rules checked:</strong><ul style="list-style:none;margin-top:0.3rem;font-size:0.82rem;">${entry.checks.map(c => `<li style="padding:0.1rem 0;color:${c.ok ? "var(--green-light)" : "#e08080"};">${c.ok ? "✓" : "✗"} <span style="color:var(--text-dim);">${forgeEsc(c.label)}</span></li>`).join("")}</ul></div>` : ""}
+    <p style="font-size:0.85rem;margin-bottom:0.7rem;"><strong>Grammar check:</strong> the translator's analyzer reads this form as <span style="color:var(--green-light);">${an ? an.type + " (" + forgeEsc(an.meta.replace(/\n/g, ", ")) + ")" : "unrecognised"}</span>.</p>
+    ${para}
+    <div style="display:flex;gap:0.7rem;align-items:center;flex-wrap:wrap;margin-top:0.9rem;">
+      <button class="btn" onclick="forgeKeep()" ${clash ? "disabled" : ""}>Keep this word${w ? " & attach to Want “" + forgeEsc(decodeURIComponent(w)) + "”" : ""}</button>
+      <label style="font-size:0.82rem;color:var(--text-dim);"><input type="checkbox" id="forge-live" checked> also make translatable now</label>
+    </div>
+    ${entry.how === "root" ? '<div id="forge-family"></div>' : ""}`;
+  if (entry.how === "root") forgeRenderFamily(entry, true);
+}
+function forgeLoad() { try { return JSON.parse(kvGet(FORGE_KEY, "[]")); } catch { return []; } }
+function forgeSave(l) { kvSet(FORGE_KEY, JSON.stringify(l)); }
+function forgeRestore() {
+  forgeLoad().forEach(f => { if (!CORE_DICT.some(x => x.k === f.k && x.t === f.t)) CORE_DICT.push({ k: f.k, t: f.t, e: f.e, _forged: true }); });
+  forgeRenderList();
+}
+function forgeKeep() {
+  const c = window._forgeCur; if (!c || !c.e.trim()) { toast("Give the word a meaning first."); return; return; }
+  const rec = { k: c.k, t: c.t, e: c.e.trim(), cls: "", how: c.how, want: window._forgeWant ? decodeURIComponent(window._forgeWant) : "" };
+  let list = forgeLoad().filter(x => !(x.k === rec.k && x.t === rec.t)); list.push(rec); forgeSave(list);
+  if (document.getElementById("forge-live").checked && !CORE_DICT.some(x => x.k === rec.k && x.t === rec.t)) CORE_DICT.push({ k: rec.k, t: rec.t, e: rec.e, _forged: true });
+  if (rec.want) {   // return the result to the Want it came from
+    let d = wantsLoad();
+    if (d[rec.want]) { d[rec.want].forged = { k: rec.k, t: rec.t, e: rec.e, cls: "" }; wantsSave(d); }
+  }
+  forgeRefreshWants(); forgeRenderList(); renderWants();
+  if (typeof renderDict === "function") renderDict();
+  toast(`Kept “${rec.k}” (${forgeLoad().length} forged)${rec.want ? " — attached to Want “" + rec.want + "”" : ""}.`);
+  const lst = document.getElementById("forge-list"); if (lst) lst.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function forgeRenderList() {
+  const el = document.getElementById("forge-list"); if (!el) return;
+  const l = forgeLoad();
+  const cnt = document.getElementById("forge-count"); if (cnt) cnt.textContent = l.length ? "(" + l.length + ")" : "";
+  el.innerHTML = l.length ? l.map((f, i) => `<div style="display:flex;gap:0.75rem;align-items:center;padding:0.35rem 0;border-bottom:1px solid var(--border);">
+      <span class="de-word">${forgeEsc(f.k)}</span><span style="color:var(--amber);font-size:0.72rem;">${f.t}</span>
+      <span style="flex:1;color:var(--text-dim);font-style:italic;">${forgeEsc(f.e)}${f.want ? ` <span style="color:var(--gold);font-size:0.72rem;">← want “${forgeEsc(f.want)}”</span>` : ""}${f.root ? ` <span style="color:var(--gold);font-size:0.72rem;">← root ${forgeEsc(f.root)}-</span>` : ""}</span>
+      <button onclick="forgeRemove(${i})" style="background:none;border:none;color:var(--text-muted);cursor:pointer;" title="Remove">✕</button></div>`).join("")
+    : `<p style="color:var(--text-muted);font-style:italic;">Nothing forged yet.</p>`;
+}
+function forgeRemove(i) {
+  let l = forgeLoad(), f = l.splice(i, 1)[0]; forgeSave(l);
+  if (f) { let ix = CORE_DICT.findIndex(x => x._forged && x.k === f.k && x.t === f.t); if (ix >= 0) CORE_DICT.splice(ix, 1); }
+  forgeRenderList(); if (typeof renderDict === "function") renderDict();
+}
+function forgeExport() {
+  const l = forgeLoad(); if (!l.length) { toast("Nothing forged yet."); return; }
+  const blob = new Blob([JSON.stringify(l.map(f => ({ k: f.k, t: f.t, e: f.e, cls: "" })), null, 2)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = `kestelal-forged-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+function forgeClear(btn) {
+  confirmTwice(btn, "Click again to clear all", () => {
+    let l = forgeLoad(); forgeSave([]);
+    // detach forged words from any Wants they were attached to
+    let d = wantsLoad(), ch = false; Object.values(d).forEach(w => { if (w.forged) { delete w.forged; ch = true; } }); if (ch) wantsSave(d);
+    for (let i = CORE_DICT.length - 1; i >= 0; i--) if (CORE_DICT[i]._forged) CORE_DICT.splice(i, 1);
+    forgeRenderList(); forgeRefreshWants(); renderWants(); if (typeof renderDict === "function") renderDict();
+    toast(l.length ? "Forged words cleared." : "Nothing to clear.");
+  });
+}
+document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => btn.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' })));
+document.querySelectorAll('.tab-btn').forEach(btn => { if (btn.getAttribute('data-tab') === 'forge') btn.addEventListener('click', () => { forgeRefreshWants(); forgeRenderList(); }); });
 </script>
 </body>
 </html>
